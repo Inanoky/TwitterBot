@@ -13,7 +13,10 @@ async function kvCommand(command: string[]) {
     throw new Error("Vercel KV is not configured.");
   }
 
-  const res = await fetch(`${KV_REST_API_URL}/${command.map(encodeURIComponent).join("/")}`, {
+  const commandPath = command.map(encodeURIComponent).join("/");
+  const endpoint = new URL(`${commandPath}`, `${KV_REST_API_URL}/`);
+
+  const res = await fetch(endpoint, {
     headers: {
       Authorization: `Bearer ${KV_REST_API_TOKEN}`
     },

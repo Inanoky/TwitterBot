@@ -78,7 +78,14 @@ export async function postToTwitter(text: string): Promise<{ id: string; text: s
   });
 
   if (!res.ok) {
-    throw new Error(`Twitter API error: ${res.status} ${await res.text()}`);
+    const raw = await res.text();
+
+    const guidance =
+      res.status === 401 || res.status === 403
+        ? " Ensure your X app has User authentication enabled, App permissions are set to 'Read and write', and you regenerated the OAuth 1.0a Access Token + Access Token Secret after changing permissions. App-only Bearer tokens cannot create tweets."
+        : "";
+
+    throw new Error(`Twitter API error: ${res.status} ${raw}${guidance}`);
   }
 
   const json = await res.json();

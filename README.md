@@ -57,16 +57,32 @@ curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron/post
 
 ## 3) API setup guidance
 
-### A) X/Twitter API credentials
+### A) X/Twitter API credentials (important)
 
-Create an app in the X Developer Portal and generate user-context OAuth 1.0a credentials:
+Based on your screenshot, you currently have an **OAuth 1.0 Access Token with `Read` only**. That cannot post tweets.
 
-- `TWITTER_API_KEY`
-- `TWITTER_API_SECRET`
+To fix this in X Developer Portal:
+
+1. Open your App → **User authentication settings** → **Set up**.
+2. Set **App permissions** to **Read and write**.
+3. Save settings.
+4. Go back to **OAuth 1.0 Keys** and click **Regenerate** for:
+   - Consumer Key/Secret (if needed)
+   - Access Token/Secret
+5. Confirm the access token now shows **Read and write** (not only Read).
+
+Then set:
+
+- `TWITTER_API_KEY` (Consumer Key)
+- `TWITTER_API_SECRET` (Consumer Secret)
 - `TWITTER_ACCESS_TOKEN`
 - `TWITTER_ACCESS_TOKEN_SECRET`
 
-The app uses `POST https://api.twitter.com/2/tweets`.
+> Note: **App-Only Bearer Token** cannot create tweets for this app flow.
+
+The app posts via:
+
+- `POST https://api.twitter.com/2/tweets`
 
 ### B) News provider keys
 
