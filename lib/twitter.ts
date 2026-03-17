@@ -68,6 +68,12 @@ export async function postToTwitter(text: string): Promise<{ id: string; text: s
   const payload = { text };
   const authHeader = buildOAuthHeader("POST", endpoint, payload, creds);
 
+  console.log("[xbot][twitter] posting", {
+    endpoint,
+    textLength: text.length,
+    preview: text.slice(0, 120)
+  });
+
   const res = await fetch(endpoint, {
     method: "POST",
     headers: {
@@ -85,9 +91,11 @@ export async function postToTwitter(text: string): Promise<{ id: string; text: s
         ? " Ensure your X app has User authentication enabled, App permissions are set to 'Read and write', and you regenerated the OAuth 1.0a Access Token + Access Token Secret after changing permissions. App-only Bearer tokens cannot create tweets."
         : "";
 
+    console.error("[xbot][twitter] post failed", { status: res.status, body: raw });
     throw new Error(`Twitter API error: ${res.status} ${raw}${guidance}`);
   }
 
   const json = await res.json();
+  console.log("[xbot][twitter] post success", { tweetId: json?.data?.id });
   return json.data;
 }

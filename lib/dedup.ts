@@ -16,6 +16,8 @@ async function kvCommand(command: string[]) {
   const commandPath = command.map(encodeURIComponent).join("/");
   const endpoint = new URL(`${commandPath}`, `${KV_REST_API_URL}/`);
 
+  console.log("[xbot][kv] command", { op: command[0], endpoint: endpoint.toString() });
+
   const res = await fetch(endpoint, {
     headers: {
       Authorization: `Bearer ${KV_REST_API_TOKEN}`
@@ -32,6 +34,7 @@ async function kvCommand(command: string[]) {
 
 export async function wasStoryPosted(url: string): Promise<boolean> {
   if (!hasKvConfig()) {
+    console.log("[xbot][kv] dedup disabled (missing KV config)");
     return false;
   }
 
@@ -41,6 +44,7 @@ export async function wasStoryPosted(url: string): Promise<boolean> {
 
 export async function markStoryAsPosted(url: string): Promise<void> {
   if (!hasKvConfig()) {
+    console.log("[xbot][kv] skip mark (missing KV config)");
     return;
   }
 

@@ -15,6 +15,8 @@ function cleanStory(story: NewsStory): NewsStory {
 
 async function fetchNewsApiStories(apiKey: string): Promise<NewsStory[]> {
   const url = `https://newsapi.org/v2/everything?q=${QUERY}&language=en&sortBy=publishedAt&pageSize=20`;
+  console.log("[xbot][news] fetching NewsAPI");
+
   const res = await fetch(url, {
     headers: { "X-Api-Key": apiKey },
     next: { revalidate: 0 }
@@ -25,7 +27,7 @@ async function fetchNewsApiStories(apiKey: string): Promise<NewsStory[]> {
   }
 
   const data = await res.json();
-  return (data.articles ?? []).map((a: any) =>
+  const stories = (data.articles ?? []).map((a: any) =>
     cleanStory({
       title: a.title,
       description: a.description ?? "",
@@ -34,10 +36,15 @@ async function fetchNewsApiStories(apiKey: string): Promise<NewsStory[]> {
       publishedAt: a.publishedAt ?? new Date().toISOString()
     })
   );
+
+  console.log("[xbot][news] NewsAPI stories", { count: stories.length });
+  return stories;
 }
 
 async function fetchGNewsStories(apiKey: string): Promise<NewsStory[]> {
   const url = `https://gnews.io/api/v4/search?q=${QUERY}&lang=en&max=20&sortby=publishedAt&apikey=${apiKey}`;
+  console.log("[xbot][news] fetching GNews");
+
   const res = await fetch(url, { next: { revalidate: 0 } });
 
   if (!res.ok) {
@@ -45,7 +52,7 @@ async function fetchGNewsStories(apiKey: string): Promise<NewsStory[]> {
   }
 
   const data = await res.json();
-  return (data.articles ?? []).map((a: any) =>
+  const stories = (data.articles ?? []).map((a: any) =>
     cleanStory({
       title: a.title,
       description: a.description ?? "",
@@ -54,11 +61,19 @@ async function fetchGNewsStories(apiKey: string): Promise<NewsStory[]> {
       publishedAt: a.publishedAt ?? new Date().toISOString()
     })
   );
+
+  console.log("[xbot][news] GNews stories", { count: stories.length });
+  return stories;
 }
 
 export async function getLatestNews(): Promise<NewsStory[]> {
   const newsApiKey = process.env.NEWS_API_KEY;
   const gnewsApiKey = process.env.GNEWS_API_KEY;
+
+  console.log("[xbot][news] provider config", {
+    hasNewsApiKey: Boolean(newsApiKey),
+    hasGnewsApiKey: Boolean(gnewsApiKey)
+  });
 
   const sources: Promise<NewsStory[]>[] = [];
 
@@ -75,6 +90,12 @@ export async function getLatestNews(): Promise<NewsStory[]> {
   }
 
   const settled = await Promise.allSettled(sources);
+
+  settled.forEach((result, index) => {
+    if (result.status === "rejected") {
+      console.error("[xbot][news] provider failed", { index, reason: result.reason?.message ?? String(result.reason) });
+    }
+  });
 
   const successful = settled
     .filter((result): result is PromiseFulfilledResult<NewsStory[]> => result.status === "fulfilled")
@@ -93,5 +114,6 @@ export async function getLatestNews(): Promise<NewsStory[]> {
     .filter((s) => s.url && s.title)
     .sort((a, b) => +new Date(b.publishedAt) - +new Date(a.publishedAt));
 
+  console.log("[xbot][news] final stories", { rawCount: successful.length, dedupedCount: deduped.length });
   return deduped;
 }
