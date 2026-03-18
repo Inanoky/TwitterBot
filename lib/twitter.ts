@@ -124,7 +124,7 @@ async function fetchBinary(url: string): Promise<Buffer> {
   return Buffer.from(arrayBuffer);
 }
 
-async function twitterRequest<T>(
+async function twitterRequest<T = unknown>(
   endpoint: string,
   options: TwitterRequestOptions = {}
 ): Promise<T> {
@@ -147,8 +147,9 @@ async function twitterRequest<T>(
     body: method === "GET" ? undefined : options.body,
   });
 
+  const raw = await res.text();
+
   if (!res.ok) {
-    const raw = await res.text();
     console.error("[xbot][twitter] request failed", {
       endpoint,
       method,
@@ -158,7 +159,23 @@ async function twitterRequest<T>(
     throw new Error(`Twitter API error: ${res.status} ${raw}`);
   }
 
-  return res.json() as Promise<T>;
+  if (!raw.trim()) {
+    return {} as T;
+  }
+
+  try {
+    return JSON.parse(raw) as T;
+  } catch (error) {
+    console.error("[xbot][twitter] non-json success response", {
+      endpoint,
+      method,
+      status: res.status,
+      body: raw,
+    });
+    throw new Error(
+      `Twitter API returned a non-JSON success response for ${endpoint}`
+    );
+  }
 }
 
 async function initializeMediaUpload(totalBytes: number): Promise<string> {
