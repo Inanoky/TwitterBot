@@ -64,3 +64,25 @@ export async function markStoryAsPosted(url: string): Promise<void> {
 export function isKvEnabled(): boolean {
   return hasKvConfig();
 }
+
+const USED_PEXELS_SET_KEY = "xbot:used_pexels_photo_ids";
+
+export async function wasPexelsPhotoUsed(photoId: string): Promise<boolean> {
+  if (!hasKvConfig()) return false;
+  const data = await kvCommand(["SISMEMBER", USED_PEXELS_SET_KEY, photoId]);
+  return data.result === 1;
+}
+
+export async function markPexelsPhotoUsed(photoId: string): Promise<void> {
+  if (!hasKvConfig()) return;
+  await kvCommand(["SADD", USED_PEXELS_SET_KEY, photoId]);
+
+  const size = await kvCommand(["SCARD", USED_PEXELS_SET_KEY]);
+  if ((size.result ?? 0) > MAX_TRACKED_URLS) {
+    const oldMembers = await kvCommand(["SRANDMEMBER", USED_PEXELS_SET_KEY, "100"]);
+    const members: string[] = oldMembers.result ?? [];
+    if (members.length > 0) {
+      await kvCommand(["SREM", USED_PEXELS_SET_KEY, ...members.slice(0, 50)]);
+    }
+  }
+}

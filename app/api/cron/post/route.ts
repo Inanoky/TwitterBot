@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { isKvEnabled, markStoryAsPosted, wasStoryPosted } from "@/lib/dedup";
+import {
+  isKvEnabled,
+  markPexelsPhotoUsed,
+  markStoryAsPosted,
+  wasStoryPosted
+} from "@/lib/dedup";
 import { getLatestNews } from "@/lib/news";
 import { generatePost } from "@/lib/post-generator";
-import { getPexelsImageUrl } from "@/lib/pexels";
 import { postToTwitter, uploadTwitterMediaFromUrl } from "@/lib/twitter";
+import { getPexelsImage } from "@/lib/pexels";
 
 const warningHookKey = "__xbot_warning_hook_installed__";
 export const runtime = "nodejs";
@@ -52,7 +57,11 @@ export async function GET(request: NextRequest) {
     let selectedStory = null;
     for (const story of stories) {
       const alreadyPosted = await wasStoryPosted(story.url);
-      console.log("[xbot][cron] dedup check", { runId, url: story.url, alreadyPosted });
+      console.log("[xbot][cron] dedup check", {
+        runId,
+        url: story.url,
+        alreadyPosted
+      });
 
       if (!alreadyPosted) {
         selectedStory = story;
@@ -81,33 +90,56 @@ export async function GET(request: NextRequest) {
     });
 
     const text = await generatePost(selectedStory);
-    console.log("[xbot][cron] generated post", { runId, length: text.length, preview: text.slice(0, 140) });
+    console.log("[xbot][cron] generated post", {
+      runId,
+      length: text.length,
+      preview: text.slice(0, 140)
+    });
 
-    const imageUrl = await getPexelsImageUrl(selectedStory);
+    const pexelsImage = await getPexelsImage(selectedStory);
     let mediaIds: string[] = [];
 
-    if (imageUrl) {
+    if (pexelsImage?.imageUrl) {
       try {
-        const mediaId = await uploadTwitterMediaFromUrl(imageUrl);
+        const mediaId = await uploadTwitterMediaFromUrl(pexelsImage.imageUrl);
         mediaIds = [mediaId];
       } catch (error) {
         console.error("[xbot][cron] media upload failed", {
           runId,
-          imageUrl,
+          imageUrl: pexelsImage.imageUrl,
           error: error instanceof Error ? error.message : String(error)
         });
       }
     }
 
     const tweet = await postToTwitter(text, { mediaIds });
-    console.log("[xbot][cron] posted tweet", { runId, tweetId: tweet.id, mediaCount: mediaIds.length });
+    console.log("[xbot][cron] posted tweet", {
+      runId,
+      tweetId: tweet.id,
+      mediaCount: mediaIds.length
+    });
 
     const sourceReplyText = `Source: ${selectedStory.url}`;
-    const sourceReply = await postToTwitter(sourceReplyText, { replyToTweetId: tweet.id });
-    console.log("[xbot][cron] posted source reply", { runId, tweetId: sourceReply.id, parentTweetId: tweet.id });
+    const sourceReply = await postToTwitter(sourceReplyText, {
+      replyToTweetId: tweet.id
+    });
+    console.log("[xbot][cron] posted source reply", {
+      runId,
+      tweetId: sourceReply.id,
+      parentTweetId: tweet.id
+    });
 
     await markStoryAsPosted(selectedStory.url);
     console.log("[xbot][cron] marked posted", { runId, url: selectedStory.url });
+
+    if (pexelsImage?.id && mediaIds.length > 0) {
+      await markPexelsPhotoUsed(pexelsImage.id);
+      console.log("[xbot][cron] marked pexels photo used", {
+        runId,
+        photoId: pexelsImage.id,
+        query: pexelsImage.query
+      });
+    }
 
     return NextResponse.json({
       ok: true,
