@@ -2,43 +2,74 @@ import OpenAI from "openai";
 
 import { NewsStory } from "@/lib/types";
 
+const MAX_TWEET_LENGTH = 280;
+const RESERVED_FOR_LINK_REPLY = 0;
 const FALLBACK_HOOKS = [
-  "AI is quietly reshaping jobsite reality:",
-  "New signal from the AI + construction frontier:",
-  "Big shift for builders adopting AI:",
-  "Construction tech is accelerating fast:",
-  "Fresh trend worth watching in AI-driven construction:"
+  "This changes how jobsites adopt AI:",
+  "Contractors should pay attention to this:",
+  "The next AI edge in construction is here:",
+  "Here’s why this AI construction update matters:",
+  "A smart shift is happening in construction tech:"
 ];
 
-function fallbackPost(story: NewsStory): string {
+function normalizeWhitespace(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function truncateTweet(text: string): string {
+  if (text.length <= MAX_TWEET_LENGTH) {
+    return text;
+  }
+
+  return `${text.slice(0, MAX_TWEET_LENGTH - 1).trimEnd()}…`;
+}
+
+function buildFallbackBody(story: NewsStory): string {
   const hook = FALLBACK_HOOKS[Math.floor(Math.random() * FALLBACK_HOOKS.length)];
-  const base = `${hook} ${story.title}`;
-  const withSource = `${base} (${story.source})\n\n${story.url}`;
-  return withSource.slice(0, 279);
+  const summarySource = story.description || story.title;
+  const body = normalizeWhitespace(
+    `${hook} ${summarySource} Why it matters: teams that adopt proven AI workflows earlier can move faster, cut rework, and make better site decisions.`
+  );
+
+  return truncateTweet(body);
+}
+
+function enforceHook(text: string): string {
+  const normalized = normalizeWhitespace(text);
+  const hasLeadHook = /^[A-Z0-9][^.!?]{0,80}[:?!-]/.test(normalized);
+
+  if (hasLeadHook) {
+    return truncateTweet(normalized);
+  }
+
+  return truncateTweet(`Watch this: ${normalized}`);
 }
 
 export async function generatePost(story: NewsStory): Promise<string> {
   const openaiApiKey = process.env.OPENAI_API_KEY;
 
   if (!openaiApiKey) {
-    return fallbackPost(story);
+    return buildFallbackBody(story);
   }
 
   const client = new OpenAI({ apiKey: openaiApiKey });
 
-  const prompt = `Create one engaging X post about this AI+construction news.
+  const prompt = `Write one engaging X post about this AI + construction news.
 
 Requirements:
-- Max 280 chars total, include URL at the end
-- Tone: insightful, energetic, practical
-- Mention why this matters for contractors, developers, or project teams
-- No clickbait, no emojis overuse (0-1 max), no hashtags unless highly relevant
-- Must be unique wording
+- Start with a viral-style hook in the first sentence fragment
+- Do NOT include the source URL because it will be posted in the first reply
+- Maximum ${MAX_TWEET_LENGTH - RESERVED_FOR_LINK_REPLY} characters
+- Make it feel sharp, specific, and useful for contractors, developers, or project teams
+- Mention why it matters in business or operational terms
+- No hashtags unless absolutely necessary
+- No more than 1 emoji, and only if it genuinely improves the post
+- Return only the final tweet text
 
 News title: ${story.title}
 News description: ${story.description}
 Source: ${story.source}
-URL: ${story.url}`;
+Article URL: ${story.url}`;
 
   const response = await client.chat.completions.create({
     model: "gpt-4o-mini",
@@ -47,7 +78,7 @@ URL: ${story.url}`;
       {
         role: "system",
         content:
-          "You write concise, high-performing X posts for B2B tech audiences. Return only the post text."
+          "You write concise, high-performing X posts for B2B audiences. Every post starts with a strong hook and fits the character limit. Return only the tweet text."
       },
       {
         role: "user",
@@ -59,9 +90,8 @@ URL: ${story.url}`;
   const content = response.choices[0]?.message?.content?.trim();
 
   if (!content) {
-    return fallbackPost(story);
+    return buildFallbackBody(story);
   }
 
-  const trimmed = content.slice(0, 280);
-  return trimmed.includes(story.url) ? trimmed : `${trimmed}\n${story.url}`.slice(0, 280);
+  return enforceHook(content);
 }
