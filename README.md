@@ -9,6 +9,8 @@ A full Next.js + Vercel Cron app that posts **every 2 hours** to X with engaging
 - Filters and sorts for fresh AI+construction content
 - Avoids duplicate post sources using **Vercel KV** (optional but recommended)
 - Generates compelling post copy with **OpenAI** (fallback generator if OpenAI key is missing)
+- Starts every post with a hook, keeps the main tweet inside the X character limit, and puts the source URL in the first reply
+- Attaches a relevant image from **Pexels** when `PEXELS_API` is configured
 - Publishes directly to X using OAuth 1.0a user context
 
 ---
@@ -96,9 +98,10 @@ If both are configured, the bot merges and deduplicates results.
 ### C) OpenAI (optional but recommended)
 
 - `OPENAI_API_KEY`
+- `PEXELS_API` for article-adjacent construction imagery
 
 If set, the app uses `gpt-4o-mini` to generate engaging post copy.
-If absent, it falls back to templated writing.
+If absent, it falls back to templated writing. When `PEXELS_API` is set, the bot also fetches a landscape image and uploads it with the main tweet.
 
 ### D) Vercel KV (recommended for no duplicates)
 
@@ -136,8 +139,9 @@ Cron is configured in `vercel.json` and runs every 2 hours.
 
 - `app/api/cron/post/route.ts` - scheduled endpoint; fetches news, chooses unposted story, generates copy, posts to X.
 - `lib/news.ts` - news providers + query + dedupe/sort.
-- `lib/post-generator.ts` - OpenAI prompt + fallback generator.
-- `lib/twitter.ts` - OAuth 1.0a signing + X post publish.
+- `lib/post-generator.ts` - hook-first OpenAI prompt + fallback generator.
+- `lib/pexels.ts` - fetches a relevant construction image from Pexels.
+- `lib/twitter.ts` - OAuth 1.0a signing + X post publish, reply, and media upload.
 - `lib/dedup.ts` - KV-based URL dedupe tracking.
 - `vercel.json` - cron schedule.
 
