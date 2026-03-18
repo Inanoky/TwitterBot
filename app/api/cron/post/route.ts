@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { isKvEnabled, markStoryAsPosted, wasStoryPosted } from "@/lib/dedup";
+import { isKvEnabled, markImageAsUsed, markStoryAsPosted, wasStoryPosted } from "@/lib/dedup";
 import { getLatestNews } from "@/lib/news";
 import { generatePost } from "@/lib/post-generator";
-import { getPexelsImageUrl } from "@/lib/pexels";
+import { getPexelsImage } from "@/lib/pexels";
 import { postToTwitter, uploadTwitterMediaFromUrl } from "@/lib/twitter";
 
 const warningHookKey = "__xbot_warning_hook_installed__";
@@ -83,13 +83,17 @@ export async function GET(request: NextRequest) {
     const text = await generatePost(selectedStory);
     console.log("[xbot][cron] generated post", { runId, length: text.length, preview: text.slice(0, 140) });
 
-    const imageUrl = await getPexelsImageUrl(selectedStory);
+    const imageSelection = await getPexelsImage(selectedStory);
+    console.log("[xbot][cron] pexels selection", { runId, imageSelection });
+
+    const imageUrl = imageSelection?.imageUrl ?? null;
     let mediaIds: string[] = [];
 
     if (imageUrl) {
       try {
         const mediaId = await uploadTwitterMediaFromUrl(imageUrl);
         mediaIds = [mediaId];
+        console.log("[xbot][cron] media upload success", { runId, imageUrl, mediaId });
       } catch (error) {
         console.error("[xbot][cron] media upload failed", {
           runId,
@@ -99,6 +103,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    console.log("[xbot][cron] creating main tweet", { runId, mediaIds, hasImage: Boolean(imageUrl) });
     const tweet = await postToTwitter(text, { mediaIds });
     console.log("[xbot][cron] posted tweet", { runId, tweetId: tweet.id, mediaCount: mediaIds.length });
 
@@ -107,6 +112,12 @@ export async function GET(request: NextRequest) {
     console.log("[xbot][cron] posted source reply", { runId, tweetId: sourceReply.id, parentTweetId: tweet.id });
 
     await markStoryAsPosted(selectedStory.url);
+
+    if (imageSelection?.photoId) {
+      await markImageAsUsed(imageSelection.photoId);
+      console.log("[xbot][cron] marked image used", { runId, photoId: imageSelection.photoId });
+    }
+
     console.log("[xbot][cron] marked posted", { runId, url: selectedStory.url });
 
     return NextResponse.json({
@@ -115,6 +126,9 @@ export async function GET(request: NextRequest) {
       postText: text,
       tweetId: tweet.id,
       sourceReplyPosted: true,
+      imageUrl,
+      mediaIds,
+      imagePhotoId: imageSelection?.photoId ?? null,
       kvEnabled: isKvEnabled(),
       runId
     });
