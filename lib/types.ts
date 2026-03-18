@@ -5,3 +5,10 @@ export type NewsStory = {
   source: string;
   publishedAt: string;
 };
+
+export type PexelsImageSelection = {
+  dedupKey: string;
+  imageUrl: string;
+  photoId: string;
+  photographer: string | null;
+};

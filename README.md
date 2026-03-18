@@ -10,7 +10,7 @@ A full Next.js + Vercel Cron app that posts **every 2 hours** to X with engaging
 - Avoids duplicate post sources using **Vercel KV** (optional but recommended)
 - Generates compelling post copy with **OpenAI** (fallback generator if OpenAI key is missing)
 - Starts every post with a hook, keeps the main tweet inside the X character limit, and puts the source URL in the first reply
-- Attaches a relevant image from **Pexels** when `PEXELS_API` is configured
+- Attaches a relevant image from **Pexels** when `PEXELS_API` is configured, while deduplicating previously used Pexels assets
 - Publishes directly to X using OAuth 1.0a user context
 
 ---

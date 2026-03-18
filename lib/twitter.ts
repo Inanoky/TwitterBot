@@ -124,7 +124,7 @@ async function fetchBinary(url: string): Promise<Buffer> {
   return Buffer.from(arrayBuffer);
 }
 
-async function twitterRequest<T = unknown>(
+async function twitterRequest<T>(
   endpoint: string,
   options: TwitterRequestOptions = {}
 ): Promise<T> {
@@ -138,6 +138,14 @@ async function twitterRequest<T = unknown>(
       ? `${endpoint}?${new URLSearchParams(formParams).toString()}`
       : endpoint;
 
+  console.log("[xbot][twitter] request", {
+    endpoint,
+    method,
+    hasBody: method === "GET" ? false : Boolean(options.body),
+    contentType: options.contentType ?? (options.body instanceof FormData ? "multipart/form-data" : null),
+    formParams: Object.keys(formParams).length > 0 ? formParams : null
+  });
+
   const res = await fetch(url, {
     method,
     headers: {
@@ -147,9 +155,8 @@ async function twitterRequest<T = unknown>(
     body: method === "GET" ? undefined : options.body,
   });
 
-  const raw = await res.text();
-
   if (!res.ok) {
+    const raw = await res.text();
     console.error("[xbot][twitter] request failed", {
       endpoint,
       method,
@@ -159,23 +166,9 @@ async function twitterRequest<T = unknown>(
     throw new Error(`Twitter API error: ${res.status} ${raw}`);
   }
 
-  if (!raw.trim()) {
-    return {} as T;
-  }
-
-  try {
-    return JSON.parse(raw) as T;
-  } catch (error) {
-    console.error("[xbot][twitter] non-json success response", {
-      endpoint,
-      method,
-      status: res.status,
-      body: raw,
-    });
-    throw new Error(
-      `Twitter API returned a non-JSON success response for ${endpoint}`
-    );
-  }
+  const json = (await res.json()) as T;
+  console.log("[xbot][twitter] request success", { endpoint, method });
+  return json;
 }
 
 async function initializeMediaUpload(totalBytes: number): Promise<string> {
@@ -185,6 +178,8 @@ async function initializeMediaUpload(totalBytes: number): Promise<string> {
     media_category: "tweet_image",
     total_bytes: totalBytes.toString(),
   };
+
+  console.log("[xbot][twitter] media init", { totalBytes });
 
   const json = await twitterRequest<{ media_id_string?: string }>(TWITTER_MEDIA_ENDPOINT, {
     method: "POST",
@@ -197,10 +192,13 @@ async function initializeMediaUpload(totalBytes: number): Promise<string> {
     throw new Error("Twitter INIT upload did not return media_id_string");
   }
 
+  console.log("[xbot][twitter] media init success", { mediaId: json.media_id_string });
   return json.media_id_string;
 }
 
 async function appendMediaChunk(mediaId: string, imageBuffer: Buffer): Promise<void> {
+  console.log("[xbot][twitter] media append", { mediaId, bytes: imageBuffer.length });
+
   const form = new FormData();
   form.append("command", "APPEND");
   form.append("media_id", mediaId);
@@ -211,6 +209,8 @@ async function appendMediaChunk(mediaId: string, imageBuffer: Buffer): Promise<v
     method: "POST",
     body: form,
   });
+
+  console.log("[xbot][twitter] media append success", { mediaId });
 }
 
 async function pollMediaStatus(mediaId: string): Promise<void> {
@@ -226,6 +226,13 @@ async function pollMediaStatus(mediaId: string): Promise<void> {
     });
 
     const state = json.processing_info?.state;
+    console.log("[xbot][twitter] media status", {
+      mediaId,
+      attempt: attempt + 1,
+      state: state ?? null,
+      checkAfterSecs: json.processing_info?.check_after_secs ?? null,
+      error: json.processing_info?.error ?? null
+    });
 
     if (!state || state === "succeeded") {
       return;
@@ -250,11 +257,20 @@ async function finalizeMediaUpload(mediaId: string): Promise<void> {
     media_id: mediaId,
   };
 
+  console.log("[xbot][twitter] media finalize", { mediaId });
+
   const json = await twitterRequest<FinalizeResponse>(TWITTER_MEDIA_ENDPOINT, {
     method: "POST",
     formParams,
     contentType: "application/x-www-form-urlencoded",
     body: new URLSearchParams(formParams).toString(),
+  });
+
+  console.log("[xbot][twitter] media finalize response", {
+    mediaId,
+    state: json.processing_info?.state ?? null,
+    checkAfterSecs: json.processing_info?.check_after_secs ?? null,
+    error: json.processing_info?.error ?? null
   });
 
   if (json.processing_info?.state && json.processing_info.state !== "succeeded") {
@@ -270,7 +286,7 @@ export async function uploadTwitterMediaFromUrl(imageUrl: string): Promise<strin
   await appendMediaChunk(mediaId, imageBuffer);
   await finalizeMediaUpload(mediaId);
 
-  console.log("[xbot][twitter] media upload success", { mediaId });
+  console.log("[xbot][twitter] media upload success", { mediaId, imageUrl });
   return mediaId;
 }
 
@@ -292,6 +308,8 @@ export async function postToTwitter(text: string, options: CreateTweetOptions = 
     mediaCount: options.mediaIds?.length ?? 0,
     preview: text.slice(0, 120),
   });
+
+  console.log("[xbot][twitter] tweet payload", payload);
 
   const json = await twitterRequest<{ data: TwitterPostResult }>(TWITTER_TWEET_ENDPOINT, {
     method: "POST",
