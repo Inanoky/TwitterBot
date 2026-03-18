@@ -54,7 +54,7 @@ function buildOAuthHeader(
     .update(baseString)
     .digest("base64");
 
-  const signedOAuth = {
+  const signedOAuth: Record<string, string> = {
     ...oauthParams,
     oauth_signature: signature,
   };
