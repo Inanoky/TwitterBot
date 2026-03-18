@@ -113,9 +113,13 @@ export async function GET(request: NextRequest) {
 
     await markStoryAsPosted(selectedStory.url);
 
-    if (imageSelection?.photoId) {
-      await markImageAsUsed(imageSelection.photoId);
-      console.log("[xbot][cron] marked image used", { runId, photoId: imageSelection.photoId });
+    if (imageSelection?.dedupKey) {
+      await markImageAsUsed(imageSelection.dedupKey);
+      console.log("[xbot][cron] marked image used", {
+        runId,
+        photoId: imageSelection.photoId,
+        dedupKey: imageSelection.dedupKey
+      });
     }
 
     console.log("[xbot][cron] marked posted", { runId, url: selectedStory.url });

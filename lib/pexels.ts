@@ -3,6 +3,16 @@ import { NewsStory, PexelsImageSelection } from "@/lib/types";
 
 const PEXELS_SEARCH_ENDPOINT = "https://api.pexels.com/v1/search";
 
+type PexelsPhoto = {
+  id?: number | string;
+  photographer?: string;
+  src?: {
+    large2x?: string;
+    large?: string;
+    original?: string;
+  };
+};
+
 function buildQuery(story: NewsStory): string {
   const sourceText = `${story.title} ${story.description}`.toLowerCase();
 
@@ -13,6 +23,31 @@ function buildQuery(story: NewsStory): string {
   if (sourceText.includes("building")) return "commercial building construction";
 
   return "construction technology";
+}
+
+function normalizePexelsUrl(url: string): string {
+  try {
+    const normalized = new URL(url);
+    normalized.search = "";
+    return normalized.toString();
+  } catch {
+    return url;
+  }
+}
+
+function getPexelsDedupKey(photo: PexelsPhoto): string | null {
+  const photoId = String(photo?.id ?? "");
+
+  if (photoId) {
+    return `pexels:photo:${photoId}`;
+  }
+
+  const sourceUrl = photo?.src?.original ?? photo?.src?.large2x ?? photo?.src?.large ?? null;
+  if (!sourceUrl) {
+    return null;
+  }
+
+  return `pexels:url:${normalizePexelsUrl(sourceUrl)}`;
 }
 
 export async function getPexelsImage(story: NewsStory): Promise<PexelsImageSelection | null> {
@@ -45,19 +80,30 @@ export async function getPexelsImage(story: NewsStory): Promise<PexelsImageSelec
   }
 
   const data = await res.json();
-  const photos = data.photos ?? [];
+  const photos: PexelsPhoto[] = data.photos ?? [];
+  const seenDedupKeys = new Set<string>();
 
   for (const photo of photos) {
     const photoId = String(photo?.id ?? "");
     const imageUrl = photo?.src?.large2x ?? photo?.src?.large ?? null;
+    const dedupKey = getPexelsDedupKey(photo);
 
-    if (!photoId || !imageUrl) {
+    if (!photoId || !imageUrl || !dedupKey) {
       continue;
     }
 
-    const alreadyUsed = await wasImageUsed(photoId);
+    const duplicateInResponse = seenDedupKeys.has(dedupKey);
+    if (duplicateInResponse) {
+      console.log("[xbot][pexels] skipped duplicate candidate in response", { photoId, dedupKey, imageUrl });
+      continue;
+    }
+
+    seenDedupKeys.add(dedupKey);
+
+    const alreadyUsed = await wasImageUsed(dedupKey);
     console.log("[xbot][pexels] candidate", {
       photoId,
+      dedupKey,
       photographer: photo?.photographer ?? null,
       imageUrl,
       alreadyUsed
@@ -65,6 +111,7 @@ export async function getPexelsImage(story: NewsStory): Promise<PexelsImageSelec
 
     if (!alreadyUsed) {
       const selection: PexelsImageSelection = {
+        dedupKey,
         photoId,
         imageUrl,
         photographer: photo?.photographer ?? null
