@@ -3,7 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { isKvEnabled, markStoryAsPosted, wasStoryPosted } from "@/lib/dedup";
 import { getLatestNews } from "@/lib/news";
 import { generatePost } from "@/lib/post-generator";
-import { postToTwitter } from "@/lib/twitter";
+import { getPexelsImageUrl } from "@/lib/pexels";
+import { postToTwitter, uploadTwitterMediaFromUrl } from "@/lib/twitter";
 
 const warningHookKey = "__xbot_warning_hook_installed__";
 export const runtime = "nodejs";
@@ -82,8 +83,28 @@ export async function GET(request: NextRequest) {
     const text = await generatePost(selectedStory);
     console.log("[xbot][cron] generated post", { runId, length: text.length, preview: text.slice(0, 140) });
 
-    const tweet = await postToTwitter(text);
-    console.log("[xbot][cron] posted tweet", { runId, tweetId: tweet.id });
+    const imageUrl = await getPexelsImageUrl(selectedStory);
+    let mediaIds: string[] = [];
+
+    if (imageUrl) {
+      try {
+        const mediaId = await uploadTwitterMediaFromUrl(imageUrl);
+        mediaIds = [mediaId];
+      } catch (error) {
+        console.error("[xbot][cron] media upload failed", {
+          runId,
+          imageUrl,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+
+    const tweet = await postToTwitter(text, { mediaIds });
+    console.log("[xbot][cron] posted tweet", { runId, tweetId: tweet.id, mediaCount: mediaIds.length });
+
+    const sourceReplyText = `Source: ${selectedStory.url}`;
+    const sourceReply = await postToTwitter(sourceReplyText, { replyToTweetId: tweet.id });
+    console.log("[xbot][cron] posted source reply", { runId, tweetId: sourceReply.id, parentTweetId: tweet.id });
 
     await markStoryAsPosted(selectedStory.url);
     console.log("[xbot][cron] marked posted", { runId, url: selectedStory.url });
@@ -93,6 +114,7 @@ export async function GET(request: NextRequest) {
       postedStoryUrl: selectedStory.url,
       postText: text,
       tweetId: tweet.id,
+      sourceReplyPosted: true,
       kvEnabled: isKvEnabled(),
       runId
     });
