@@ -7,6 +7,7 @@ export type NewsStory = {
 };
 
 export type PexelsImageSelection = {
+  dedupKey: string;
   imageUrl: string;
   photoId: string;
   photographer: string | null;
