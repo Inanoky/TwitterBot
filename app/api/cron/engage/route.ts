@@ -42,17 +42,48 @@ export async function GET(request: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   const authHeader = request.headers.get("authorization");
 
+  console.log("[xbot][engage] start", {
+    runId,
+    kvEnabled: isKvEnabled(),
+    hasCronSecret: Boolean(cronSecret),
+    hasAuthHeader: Boolean(authHeader)
+  });
+
   if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+    console.warn("[xbot][engage] unauthorized", { runId });
     return unauthorized();
   }
 
   try {
     const posts = await searchRecentTweets(ENGAGEMENT_QUERY, 20);
+    console.log("[xbot][engage] posts fetched", {
+      runId,
+      count: posts.length,
+      topCandidates: posts.slice(0, 5).map((post) => ({
+        id: post.id,
+        authorUsername: post.authorUsername,
+        likeCount: post.likeCount,
+        replyCount: post.replyCount,
+        quoteCount: post.quoteCount,
+        followers: post.authorFollowersCount,
+        url: post.url
+      }))
+    });
+
     const rankedPosts = posts.sort((a, b) => scorePost(b) - scorePost(a));
 
     let targetPost: TwitterSearchPost | null = null;
     for (const post of rankedPosts) {
       const alreadyLiked = await wasTweetLiked(post.id);
+      console.log("[xbot][engage] candidate check", {
+        runId,
+        tweetId: post.id,
+        authorUsername: post.authorUsername,
+        score: scorePost(post),
+        alreadyLiked,
+        url: post.url
+      });
+
       if (!alreadyLiked) {
         targetPost = post;
         break;
@@ -60,6 +91,7 @@ export async function GET(request: NextRequest) {
     }
 
     if (!targetPost) {
+      console.log("[xbot][engage] no target post found", { runId });
       return NextResponse.json({
         ok: true,
         message: "No new relevant posts found for audience growth.",
@@ -68,18 +100,58 @@ export async function GET(request: NextRequest) {
       });
     }
 
+    console.log("[xbot][engage] selected target", {
+      runId,
+      tweetId: targetPost.id,
+      authorId: targetPost.authorId,
+      authorUsername: targetPost.authorUsername,
+      authorFollowersCount: targetPost.authorFollowersCount,
+      shouldFollow: shouldFollowAuthor(targetPost),
+      url: targetPost.url
+    });
+
     await likeTweet(targetPost.id);
     await markTweetLiked(targetPost.id);
+    console.log("[xbot][engage] tweet liked", {
+      runId,
+      tweetId: targetPost.id,
+      url: targetPost.url
+    });
 
     let followedAuthor = false;
     if (shouldFollowAuthor(targetPost) && targetPost.authorId) {
       const alreadyFollowed = await wasUserFollowed(targetPost.authorId);
+      console.log("[xbot][engage] follow check", {
+        runId,
+        authorId: targetPost.authorId,
+        authorUsername: targetPost.authorUsername,
+        alreadyFollowed
+      });
+
       if (!alreadyFollowed) {
         await followUser(targetPost.authorId);
         await markUserFollowed(targetPost.authorId);
         followedAuthor = true;
+        console.log("[xbot][engage] author followed", {
+          runId,
+          authorId: targetPost.authorId,
+          authorUsername: targetPost.authorUsername
+        });
       }
+    } else {
+      console.log("[xbot][engage] follow skipped", {
+        runId,
+        authorId: targetPost.authorId,
+        authorUsername: targetPost.authorUsername,
+        authorFollowersCount: targetPost.authorFollowersCount
+      });
     }
+
+    console.log("[xbot][engage] completed", {
+      runId,
+      tweetId: targetPost.id,
+      followedAuthor
+    });
 
     return NextResponse.json({
       ok: true,

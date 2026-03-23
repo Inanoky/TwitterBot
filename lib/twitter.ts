@@ -255,6 +255,11 @@ export async function searchRecentTweets(query: string, maxResults = 10): Promis
 
   console.log("[xbot][twitter] search recent tweets", { query, maxResults: params.max_results });
   const json = await twitterBearerGet<TwitterSearchApiResponse>(TWITTER_SEARCH_ENDPOINT, params);
+  console.log("[xbot][twitter] search recent tweets response", {
+    query,
+    resultCount: json.data?.length ?? 0,
+    includedUsers: json.includes?.users?.length ?? 0
+  });
   const userMap = new Map((json.includes?.users ?? []).map((user) => [user.id, user]));
 
   return (json.data ?? []).map((tweet) => {
@@ -292,16 +297,19 @@ export async function getAuthenticatedTwitterUser(): Promise<{ id: string; usern
     throw new Error("Twitter API did not return the authenticated user id.");
   }
 
+  console.log("[xbot][twitter] authenticated user", { id: json.data.id, username: json.data.username });
   return json.data;
 }
 
 export async function likeTweet(tweetId: string): Promise<void> {
   const viewer = await getAuthenticatedTwitterUser();
+  console.log("[xbot][twitter] liking tweet", { viewerId: viewer.id, tweetId });
   await twitterRequest(`${TWITTER_API_BASE}/users/${viewer.id}/likes`, {
     method: "POST",
     contentType: "application/json",
     body: JSON.stringify({ tweet_id: tweetId })
   });
+  console.log("[xbot][twitter] like success", { viewerId: viewer.id, tweetId });
 }
 
 export async function followUser(targetUserId: string): Promise<void> {
@@ -312,11 +320,13 @@ export async function followUser(targetUserId: string): Promise<void> {
     return;
   }
 
+  console.log("[xbot][twitter] following user", { viewerId: viewer.id, targetUserId });
   await twitterRequest(`${TWITTER_API_BASE}/users/${viewer.id}/following`, {
     method: "POST",
     contentType: "application/json",
     body: JSON.stringify({ target_user_id: targetUserId })
   });
+  console.log("[xbot][twitter] follow success", { viewerId: viewer.id, targetUserId });
 }
 
 async function initializeMediaUpload(totalBytes: number): Promise<string> {
