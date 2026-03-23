@@ -2,6 +2,8 @@ const KV_REST_API_URL = process.env.KV_REST_API_URL;
 const KV_REST_API_TOKEN = process.env.KV_REST_API_TOKEN;
 
 const POSTED_SET_KEY = "xbot:posted_story_urls";
+const USED_PEXELS_SET_KEY = "xbot:used_pexels_photo_ids";
+const ENGAGED_TWEETS_SET_KEY = "xbot:engaged_tweet_ids";
 const MAX_TRACKED_URLS = 500;
 
 function hasKvConfig() {
@@ -32,6 +34,18 @@ async function kvCommand(command: string[]) {
   return res.json();
 }
 
+async function trimSetIfNeeded(setKey: string): Promise<void> {
+  const size = await kvCommand(["SCARD", setKey]);
+  if ((size.result ?? 0) > MAX_TRACKED_URLS) {
+    const oldMembers = await kvCommand(["SRANDMEMBER", setKey, "100"]);
+    const members: string[] = oldMembers.result ?? [];
+
+    if (members.length > 0) {
+      await kvCommand(["SREM", setKey, ...members.slice(0, 50)]);
+    }
+  }
+}
+
 export async function wasStoryPosted(url: string): Promise<boolean> {
   if (!hasKvConfig()) {
     console.log("[xbot][kv] dedup disabled (missing KV config)");
@@ -49,23 +63,12 @@ export async function markStoryAsPosted(url: string): Promise<void> {
   }
 
   await kvCommand(["SADD", POSTED_SET_KEY, url]);
-
-  const size = await kvCommand(["SCARD", POSTED_SET_KEY]);
-  if ((size.result ?? 0) > MAX_TRACKED_URLS) {
-    const oldMembers = await kvCommand(["SRANDMEMBER", POSTED_SET_KEY, "100"]);
-    const members: string[] = oldMembers.result ?? [];
-
-    if (members.length > 0) {
-      await kvCommand(["SREM", POSTED_SET_KEY, ...members.slice(0, 50)]);
-    }
-  }
+  await trimSetIfNeeded(POSTED_SET_KEY);
 }
 
 export function isKvEnabled(): boolean {
   return hasKvConfig();
 }
-
-const USED_PEXELS_SET_KEY = "xbot:used_pexels_photo_ids";
 
 export async function wasPexelsPhotoUsed(photoId: string): Promise<boolean> {
   if (!hasKvConfig()) return false;
@@ -76,13 +79,17 @@ export async function wasPexelsPhotoUsed(photoId: string): Promise<boolean> {
 export async function markPexelsPhotoUsed(photoId: string): Promise<void> {
   if (!hasKvConfig()) return;
   await kvCommand(["SADD", USED_PEXELS_SET_KEY, photoId]);
+  await trimSetIfNeeded(USED_PEXELS_SET_KEY);
+}
 
-  const size = await kvCommand(["SCARD", USED_PEXELS_SET_KEY]);
-  if ((size.result ?? 0) > MAX_TRACKED_URLS) {
-    const oldMembers = await kvCommand(["SRANDMEMBER", USED_PEXELS_SET_KEY, "100"]);
-    const members: string[] = oldMembers.result ?? [];
-    if (members.length > 0) {
-      await kvCommand(["SREM", USED_PEXELS_SET_KEY, ...members.slice(0, 50)]);
-    }
-  }
+export async function wasTweetEngaged(tweetId: string): Promise<boolean> {
+  if (!hasKvConfig()) return false;
+  const data = await kvCommand(["SISMEMBER", ENGAGED_TWEETS_SET_KEY, tweetId]);
+  return data.result === 1;
+}
+
+export async function markTweetAsEngaged(tweetId: string): Promise<void> {
+  if (!hasKvConfig()) return;
+  await kvCommand(["SADD", ENGAGED_TWEETS_SET_KEY, tweetId]);
+  await trimSetIfNeeded(ENGAGED_TWEETS_SET_KEY);
 }

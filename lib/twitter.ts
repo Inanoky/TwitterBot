@@ -1,5 +1,7 @@
 import crypto from "node:crypto";
 
+import { TwitterSearchPost } from "@/lib/types";
+
 type OAuthCredentials = {
   consumerKey: string;
   consumerSecret: string;
@@ -37,8 +39,31 @@ type FinalizeResponse = {
   };
 };
 
+type TwitterSearchApiResponse = {
+  data?: Array<{
+    id: string;
+    text: string;
+    author_id?: string;
+    created_at?: string;
+    public_metrics?: {
+      like_count?: number;
+      retweet_count?: number;
+      reply_count?: number;
+      quote_count?: number;
+      impression_count?: number;
+    };
+  }>;
+  includes?: {
+    users?: Array<{
+      id: string;
+      username?: string;
+    }>;
+  };
+};
+
 const TWITTER_TWEET_ENDPOINT = "https://api.twitter.com/2/tweets";
 const TWITTER_MEDIA_ENDPOINT = "https://upload.twitter.com/1.1/media/upload.json";
+const TWITTER_SEARCH_ENDPOINT = "https://api.twitter.com/2/tweets/search/recent";
 const MAX_STATUS_POLLS = 6;
 
 function encode(value: string): string {
@@ -71,6 +96,16 @@ function getCredentials(): OAuthCredentials {
   }
 
   return creds;
+}
+
+function getTwitterBearerToken(): string {
+  const bearerToken = process.env.TWITTER_BEARER_TOKEN ?? "";
+
+  if (!bearerToken) {
+    throw new Error("Missing Twitter bearer token: TWITTER_BEARER_TOKEN");
+  }
+
+  return bearerToken;
 }
 
 function buildOAuthHeader(
@@ -108,7 +143,7 @@ function buildOAuthHeader(
     "OAuth " +
     Object.keys(signedOAuth)
       .sort()
-      .map((key) => `${encode(key)}="${encode(signedOAuth[key])}"`)
+      .map((key) => `${encode(key)}=\"${encode(signedOAuth[key])}\"`)
       .join(", ")
   );
 }
@@ -165,7 +200,7 @@ async function twitterRequest<T = unknown>(
 
   try {
     return JSON.parse(raw) as T;
-  } catch (error) {
+  } catch {
     console.error("[xbot][twitter] non-json success response", {
       endpoint,
       method,
@@ -176,6 +211,57 @@ async function twitterRequest<T = unknown>(
       `Twitter API returned a non-JSON success response for ${endpoint}`
     );
   }
+}
+
+async function twitterBearerGet<T>(endpoint: string, params: Record<string, string>): Promise<T> {
+  const url = `${endpoint}?${new URLSearchParams(params).toString()}`;
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${getTwitterBearerToken()}`,
+    },
+    next: { revalidate: 0 },
+  });
+
+  const raw = await res.text();
+
+  if (!res.ok) {
+    console.error("[xbot][twitter] bearer request failed", { endpoint, status: res.status, body: raw });
+    throw new Error(`Twitter API bearer error: ${res.status} ${raw}`);
+  }
+
+  return raw.trim() ? (JSON.parse(raw) as T) : ({} as T);
+}
+
+function buildTweetUrl(username: string | undefined, id: string): string {
+  return username ? `https://x.com/${username}/status/${id}` : `https://x.com/i/web/status/${id}`;
+}
+
+export async function searchRecentTweets(query: string, maxResults = 10): Promise<TwitterSearchPost[]> {
+  const params = {
+    query,
+    max_results: String(Math.min(Math.max(maxResults, 10), 100)),
+    "tweet.fields": "author_id,created_at,public_metrics",
+    expansions: "author_id",
+    "user.fields": "username",
+  };
+
+  console.log("[xbot][twitter] search recent tweets", { query, maxResults: params.max_results });
+  const json = await twitterBearerGet<TwitterSearchApiResponse>(TWITTER_SEARCH_ENDPOINT, params);
+  const userMap = new Map((json.includes?.users ?? []).map((user) => [user.id, user.username]));
+
+  return (json.data ?? []).map((tweet) => ({
+    id: tweet.id,
+    text: tweet.text,
+    authorId: tweet.author_id,
+    authorUsername: tweet.author_id ? userMap.get(tweet.author_id) : undefined,
+    likeCount: tweet.public_metrics?.like_count ?? 0,
+    retweetCount: tweet.public_metrics?.retweet_count ?? 0,
+    replyCount: tweet.public_metrics?.reply_count ?? 0,
+    quoteCount: tweet.public_metrics?.quote_count ?? 0,
+    impressionCount: tweet.public_metrics?.impression_count,
+    createdAt: tweet.created_at ?? new Date().toISOString(),
+    url: buildTweetUrl(tweet.author_id ? userMap.get(tweet.author_id) : undefined, tweet.id),
+  }));
 }
 
 async function initializeMediaUpload(totalBytes: number): Promise<string> {
