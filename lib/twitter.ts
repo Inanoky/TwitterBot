@@ -19,6 +19,17 @@ type TwitterPostResult = {
   text: string;
 };
 
+type TwitterUser = {
+  id: string;
+  username?: string;
+  name?: string;
+  verified?: boolean;
+  public_metrics?: {
+    followers_count?: number;
+    following_count?: number;
+  };
+};
+
 type TwitterRequestOptions = {
   body?: BodyInit;
   contentType?: string;
@@ -54,16 +65,15 @@ type TwitterSearchApiResponse = {
     };
   }>;
   includes?: {
-    users?: Array<{
-      id: string;
-      username?: string;
-    }>;
+    users?: TwitterUser[];
   };
 };
 
 const TWITTER_TWEET_ENDPOINT = "https://api.twitter.com/2/tweets";
 const TWITTER_MEDIA_ENDPOINT = "https://upload.twitter.com/1.1/media/upload.json";
 const TWITTER_SEARCH_ENDPOINT = "https://api.twitter.com/2/tweets/search/recent";
+const TWITTER_USERS_ME_ENDPOINT = "https://api.twitter.com/2/users/me";
+const TWITTER_API_BASE = "https://api.twitter.com/2";
 const MAX_STATUS_POLLS = 6;
 
 function encode(value: string): string {
@@ -207,9 +217,7 @@ async function twitterRequest<T = unknown>(
       status: res.status,
       body: raw,
     });
-    throw new Error(
-      `Twitter API returned a non-JSON success response for ${endpoint}`
-    );
+    throw new Error(`Twitter API returned a non-JSON success response for ${endpoint}`);
   }
 }
 
@@ -242,26 +250,73 @@ export async function searchRecentTweets(query: string, maxResults = 10): Promis
     max_results: String(Math.min(Math.max(maxResults, 10), 100)),
     "tweet.fields": "author_id,created_at,public_metrics",
     expansions: "author_id",
-    "user.fields": "username",
+    "user.fields": "username,name,verified,public_metrics",
   };
 
   console.log("[xbot][twitter] search recent tweets", { query, maxResults: params.max_results });
   const json = await twitterBearerGet<TwitterSearchApiResponse>(TWITTER_SEARCH_ENDPOINT, params);
-  const userMap = new Map((json.includes?.users ?? []).map((user) => [user.id, user.username]));
+  const userMap = new Map((json.includes?.users ?? []).map((user) => [user.id, user]));
 
-  return (json.data ?? []).map((tweet) => ({
-    id: tweet.id,
-    text: tweet.text,
-    authorId: tweet.author_id,
-    authorUsername: tweet.author_id ? userMap.get(tweet.author_id) : undefined,
-    likeCount: tweet.public_metrics?.like_count ?? 0,
-    retweetCount: tweet.public_metrics?.retweet_count ?? 0,
-    replyCount: tweet.public_metrics?.reply_count ?? 0,
-    quoteCount: tweet.public_metrics?.quote_count ?? 0,
-    impressionCount: tweet.public_metrics?.impression_count,
-    createdAt: tweet.created_at ?? new Date().toISOString(),
-    url: buildTweetUrl(tweet.author_id ? userMap.get(tweet.author_id) : undefined, tweet.id),
-  }));
+  return (json.data ?? []).map((tweet) => {
+    const user = tweet.author_id ? userMap.get(tweet.author_id) : undefined;
+
+    return {
+      id: tweet.id,
+      text: tweet.text,
+      authorId: tweet.author_id,
+      authorUsername: user?.username,
+      authorName: user?.name,
+      authorFollowersCount: user?.public_metrics?.followers_count,
+      authorFollowingCount: user?.public_metrics?.following_count,
+      authorVerified: user?.verified,
+      likeCount: tweet.public_metrics?.like_count ?? 0,
+      retweetCount: tweet.public_metrics?.retweet_count ?? 0,
+      replyCount: tweet.public_metrics?.reply_count ?? 0,
+      quoteCount: tweet.public_metrics?.quote_count ?? 0,
+      impressionCount: tweet.public_metrics?.impression_count,
+      createdAt: tweet.created_at ?? new Date().toISOString(),
+      url: buildTweetUrl(user?.username, tweet.id),
+    };
+  });
+}
+
+export async function getAuthenticatedTwitterUser(): Promise<{ id: string; username?: string }> {
+  const json = await twitterRequest<{ data?: { id: string; username?: string } }>(TWITTER_USERS_ME_ENDPOINT, {
+    method: "GET",
+    formParams: {
+      "user.fields": "username"
+    }
+  });
+
+  if (!json.data?.id) {
+    throw new Error("Twitter API did not return the authenticated user id.");
+  }
+
+  return json.data;
+}
+
+export async function likeTweet(tweetId: string): Promise<void> {
+  const viewer = await getAuthenticatedTwitterUser();
+  await twitterRequest(`${TWITTER_API_BASE}/users/${viewer.id}/likes`, {
+    method: "POST",
+    contentType: "application/json",
+    body: JSON.stringify({ tweet_id: tweetId })
+  });
+}
+
+export async function followUser(targetUserId: string): Promise<void> {
+  const viewer = await getAuthenticatedTwitterUser();
+
+  if (viewer.id === targetUserId) {
+    console.log("[xbot][twitter] skip follow self", { targetUserId });
+    return;
+  }
+
+  await twitterRequest(`${TWITTER_API_BASE}/users/${viewer.id}/following`, {
+    method: "POST",
+    contentType: "application/json",
+    body: JSON.stringify({ target_user_id: targetUserId })
+  });
 }
 
 async function initializeMediaUpload(totalBytes: number): Promise<string> {

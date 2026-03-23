@@ -11,6 +11,10 @@ export type TwitterSearchPost = {
   text: string;
   authorId?: string;
   authorUsername?: string;
+  authorName?: string;
+  authorFollowersCount?: number;
+  authorFollowingCount?: number;
+  authorVerified?: boolean;
   likeCount: number;
   retweetCount: number;
   replyCount: number;

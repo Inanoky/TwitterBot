@@ -10,8 +10,8 @@ A full Next.js + Vercel Cron app that posts **every hour** to X with engaging up
 - Lets the configured latest OpenAI model (default `gpt-5.1`) choose the most engaging AI+construction topic before posting
 - Filters and sorts for fresh AI+construction content
 - Avoids duplicate post sources using **Vercel KV** (optional but recommended)
-- Generates compelling post copy and engagement replies with **OpenAI** (fallback generator if OpenAI key is missing)
-- Engages automatically with relevant X posts **3 times per day** via a dedicated cron route
+- Generates compelling post copy with **OpenAI** (fallback generator if OpenAI key is missing)
+- Grows the account more safely by liking relevant niche posts and optionally following strong-fit creators **3 times per day** via a dedicated cron route
 - Starts every post with a hook, keeps the main tweet inside the X character limit, and puts the source URL in the first reply
 - Attaches a relevant image from **Pexels** when `PEXELS_API` is configured
 - Publishes directly to X using OAuth 1.0a user context
@@ -107,7 +107,6 @@ If both are configured, the bot merges and deduplicates results.
 If set, the app uses the configured OpenAI model to:
 - choose the most engaging topic from the news + X discussion set
 - generate the main post copy
-- write thoughtful reply comments for engagement runs
 
 If absent, it falls back to templated writing. When `PEXELS_API` is set, the bot also fetches a landscape image and uploads it with the main tweet.
 
@@ -146,7 +145,7 @@ Cron is configured in `vercel.json` and currently posts hourly while the engagem
 ## 5) Project structure
 
 - `app/api/cron/post/route.ts` - scheduled endpoint; fetches news, looks up related X posts, lets OpenAI choose the best topic, generates copy, posts to X.
-- `app/api/cron/engage/route.ts` - scheduled endpoint; finds relevant X posts and replies to one new post each run (3 runs/day).
+- `app/api/cron/engage/route.ts` - scheduled endpoint; finds relevant X posts, likes one strong-fit post, and optionally follows the author on each run (3 runs/day).
 - `lib/news.ts` - news providers + query + dedupe/sort.
 - `lib/post-generator.ts` - hook-first OpenAI prompt + fallback generator.
 - `lib/pexels.ts` - fetches a relevant construction image from Pexels.
@@ -158,8 +157,9 @@ Cron is configured in `vercel.json` and currently posts hourly while the engagem
 
 ## 6) Notes on reliability & quality
 
-- The bot chooses the newest unposted story URL first.
-- Writing is constrained for practical and engaging B2B tone.
+- The posting cron now ranks fresh unposted stories using both news recency and current X conversation.
+- The growth cron avoids cold auto-replies and instead uses lower-friction actions (likes + selective follows) to build visibility more safely.
+- Writing is constrained for practical and engaging B2B tone, with room for a natural discussion prompt when useful.
 - Add additional providers or ranking logic if you want richer source diversity.
 - If no fresh story exists, the cron run exits cleanly without posting.
 

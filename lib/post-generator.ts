@@ -157,6 +157,7 @@ Requirements:
 - Maximum ${MAX_TWEET_LENGTH - RESERVED_FOR_LINK_REPLY} characters
 - Make it feel sharp, specific, and useful for contractors, developers, or project teams
 - Mention why it matters in business or operational terms
+- End with a short discussion prompt only when it feels natural and helps invite replies
 - No hashtags unless absolutely necessary
 - No more than 1 emoji, and only if it genuinely improves the post
 - Return only the final tweet text
@@ -192,38 +193,3 @@ Relevant X conversation: ${JSON.stringify(relatedPosts.slice(0, 3))}`;
   return enforceHook(content);
 }
 
-export async function generateEngagementComment(post: TwitterSearchPost): Promise<string> {
-  const client = getOpenAiClient();
-
-  if (!client) {
-    return truncateTweet(
-      normalizeWhitespace(
-        `Strong signal here: the teams that turn AI into repeatable site workflows will build an edge faster than teams still treating it like a demo.`
-      )
-    );
-  }
-
-  const response = await client.chat.completions.create({
-    model: OPENAI_MODEL,
-    temperature: 0.7,
-    messages: [
-      {
-        role: "system",
-        content:
-          "You write concise reply comments for an AI-in-construction X account. Sound thoughtful, add one practical insight, stay respectful, avoid spammy agreement, no hashtags, and keep replies under 240 characters. Return only the reply text."
-      },
-      {
-        role: "user",
-        content: `Write a reply to this X post:\n${JSON.stringify(post)}`
-      }
-    ]
-  });
-
-  const content = response.choices[0]?.message?.content?.trim();
-
-  if (!content) {
-    return truncateTweet("Useful point. The real winners will be teams that connect AI pilots to daily field workflows, not just dashboards.");
-  }
-
-  return truncateTweet(normalizeWhitespace(content));
-}
