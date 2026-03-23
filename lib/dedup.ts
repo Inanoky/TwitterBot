@@ -2,6 +2,9 @@ const KV_REST_API_URL = process.env.KV_REST_API_URL;
 const KV_REST_API_TOKEN = process.env.KV_REST_API_TOKEN;
 
 const POSTED_SET_KEY = "xbot:posted_story_urls";
+const USED_PEXELS_SET_KEY = "xbot:used_pexels_photo_ids";
+const LIKED_TWEETS_SET_KEY = "xbot:liked_tweet_ids";
+const FOLLOWED_USERS_SET_KEY = "xbot:followed_user_ids";
 const MAX_TRACKED_URLS = 500;
 
 function hasKvConfig() {
@@ -32,14 +35,37 @@ async function kvCommand(command: string[]) {
   return res.json();
 }
 
+async function trimSetIfNeeded(setKey: string): Promise<void> {
+  const size = await kvCommand(["SCARD", setKey]);
+  if ((size.result ?? 0) > MAX_TRACKED_URLS) {
+    const oldMembers = await kvCommand(["SRANDMEMBER", setKey, "100"]);
+    const members: string[] = oldMembers.result ?? [];
+
+    if (members.length > 0) {
+      await kvCommand(["SREM", setKey, ...members.slice(0, 50)]);
+    }
+  }
+}
+
+async function isMember(setKey: string, value: string): Promise<boolean> {
+  if (!hasKvConfig()) return false;
+  const data = await kvCommand(["SISMEMBER", setKey, value]);
+  return data.result === 1;
+}
+
+async function addMember(setKey: string, value: string): Promise<void> {
+  if (!hasKvConfig()) return;
+  await kvCommand(["SADD", setKey, value]);
+  await trimSetIfNeeded(setKey);
+}
+
 export async function wasStoryPosted(url: string): Promise<boolean> {
   if (!hasKvConfig()) {
     console.log("[xbot][kv] dedup disabled (missing KV config)");
     return false;
   }
 
-  const data = await kvCommand(["SISMEMBER", POSTED_SET_KEY, url]);
-  return data.result === 1;
+  return isMember(POSTED_SET_KEY, url);
 }
 
 export async function markStoryAsPosted(url: string): Promise<void> {
@@ -48,41 +74,33 @@ export async function markStoryAsPosted(url: string): Promise<void> {
     return;
   }
 
-  await kvCommand(["SADD", POSTED_SET_KEY, url]);
-
-  const size = await kvCommand(["SCARD", POSTED_SET_KEY]);
-  if ((size.result ?? 0) > MAX_TRACKED_URLS) {
-    const oldMembers = await kvCommand(["SRANDMEMBER", POSTED_SET_KEY, "100"]);
-    const members: string[] = oldMembers.result ?? [];
-
-    if (members.length > 0) {
-      await kvCommand(["SREM", POSTED_SET_KEY, ...members.slice(0, 50)]);
-    }
-  }
+  await addMember(POSTED_SET_KEY, url);
 }
 
 export function isKvEnabled(): boolean {
   return hasKvConfig();
 }
 
-const USED_PEXELS_SET_KEY = "xbot:used_pexels_photo_ids";
-
 export async function wasPexelsPhotoUsed(photoId: string): Promise<boolean> {
-  if (!hasKvConfig()) return false;
-  const data = await kvCommand(["SISMEMBER", USED_PEXELS_SET_KEY, photoId]);
-  return data.result === 1;
+  return isMember(USED_PEXELS_SET_KEY, photoId);
 }
 
 export async function markPexelsPhotoUsed(photoId: string): Promise<void> {
-  if (!hasKvConfig()) return;
-  await kvCommand(["SADD", USED_PEXELS_SET_KEY, photoId]);
+  await addMember(USED_PEXELS_SET_KEY, photoId);
+}
 
-  const size = await kvCommand(["SCARD", USED_PEXELS_SET_KEY]);
-  if ((size.result ?? 0) > MAX_TRACKED_URLS) {
-    const oldMembers = await kvCommand(["SRANDMEMBER", USED_PEXELS_SET_KEY, "100"]);
-    const members: string[] = oldMembers.result ?? [];
-    if (members.length > 0) {
-      await kvCommand(["SREM", USED_PEXELS_SET_KEY, ...members.slice(0, 50)]);
-    }
-  }
+export async function wasTweetLiked(tweetId: string): Promise<boolean> {
+  return isMember(LIKED_TWEETS_SET_KEY, tweetId);
+}
+
+export async function markTweetLiked(tweetId: string): Promise<void> {
+  await addMember(LIKED_TWEETS_SET_KEY, tweetId);
+}
+
+export async function wasUserFollowed(userId: string): Promise<boolean> {
+  return isMember(FOLLOWED_USERS_SET_KEY, userId);
+}
+
+export async function markUserFollowed(userId: string): Promise<void> {
+  await addMember(FOLLOWED_USERS_SET_KEY, userId);
 }
