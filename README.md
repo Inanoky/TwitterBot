@@ -1,14 +1,17 @@
 # AI Construction News Bot for X (Twitter)
 
-A full Next.js + Vercel Cron app that posts **every 2 hours** to X with engaging updates about AI trends in construction (AEC, infrastructure, jobsite automation, robotics, etc.).
+A full Next.js + Vercel Cron app that posts **every hour** to X with engaging updates about AI trends in construction (AEC, infrastructure, jobsite automation, robotics, etc.).
 
 ## Features
 
-- Runs on **Vercel Cron** (`0 */2 * * *`)
+- Runs on **Vercel Cron** (`0 */1 * * *`) for posting plus a second cron for engagement replies
 - Fetches latest stories from **NewsAPI** and/or **GNews**
+- Pulls related X conversation via the X recent search API to spot topics already getting traction
+- Lets the configured latest OpenAI model (default `gpt-5.1`) choose the most engaging AI+construction topic before posting
 - Filters and sorts for fresh AI+construction content
 - Avoids duplicate post sources using **Vercel KV** (optional but recommended)
 - Generates compelling post copy with **OpenAI** (fallback generator if OpenAI key is missing)
+- Grows the account more safely by liking relevant niche posts and optionally following strong-fit creators **3 times per day** via a dedicated cron route
 - Starts every post with a hook, keeps the main tweet inside the X character limit, and puts the source URL in the first reply
 - Attaches a relevant image from **Pexels** when `PEXELS_API` is configured
 - Publishes directly to X using OAuth 1.0a user context
@@ -80,7 +83,7 @@ Then set:
 - `TWITTER_ACCESS_TOKEN`
 - `TWITTER_ACCESS_TOKEN_SECRET`
 
-> Note: **App-Only Bearer Token** cannot create tweets for this app flow.
+> Note: **App-Only Bearer Token** cannot create tweets for this app flow, but you should still add `TWITTER_BEARER_TOKEN` because the bot now uses X recent search to discover relevant tweets/news momentum.
 
 The app posts via:
 
@@ -98,9 +101,13 @@ If both are configured, the bot merges and deduplicates results.
 ### C) OpenAI (optional but recommended)
 
 - `OPENAI_API_KEY`
+- Optional: `OPENAI_MODEL` (defaults to `gpt-5.1`)
 - `PEXELS_API` for article-adjacent construction imagery
 
-If set, the app uses `gpt-4o-mini` to generate engaging post copy.
+If set, the app uses the configured OpenAI model to:
+- choose the most engaging topic from the news + X discussion set
+- generate the main post copy
+
 If absent, it falls back to templated writing. When `PEXELS_API` is set, the bot also fetches a landscape image and uploads it with the main tweet.
 
 ### D) Vercel KV (recommended for no duplicates)
@@ -131,13 +138,14 @@ Vercel cron should send:
 3. Add all environment variables in **Project Settings → Environment Variables**.
 4. Deploy.
 
-Cron is configured in `vercel.json` and runs every 2 hours.
+Cron is configured in `vercel.json` and currently posts hourly while the engagement cron runs 3 times per day.
 
 ---
 
 ## 5) Project structure
 
-- `app/api/cron/post/route.ts` - scheduled endpoint; fetches news, chooses unposted story, generates copy, posts to X.
+- `app/api/cron/post/route.ts` - scheduled endpoint; fetches news, looks up related X posts, lets OpenAI choose the best topic, generates copy, posts to X.
+- `app/api/cron/engage/route.ts` - scheduled endpoint; finds relevant X posts, likes one strong-fit post, and optionally follows the author on each run (3 runs/day).
 - `lib/news.ts` - news providers + query + dedupe/sort.
 - `lib/post-generator.ts` - hook-first OpenAI prompt + fallback generator.
 - `lib/pexels.ts` - fetches a relevant construction image from Pexels.
@@ -149,8 +157,9 @@ Cron is configured in `vercel.json` and runs every 2 hours.
 
 ## 6) Notes on reliability & quality
 
-- The bot chooses the newest unposted story URL first.
-- Writing is constrained for practical and engaging B2B tone.
+- The posting cron now ranks fresh unposted stories using both news recency and current X conversation.
+- The growth cron avoids cold auto-replies and instead uses lower-friction actions (likes + selective follows) to build visibility more safely.
+- Writing is constrained for practical and engaging B2B tone, with room for a natural discussion prompt when useful.
 - Add additional providers or ranking logic if you want richer source diversity.
 - If no fresh story exists, the cron run exits cleanly without posting.
 

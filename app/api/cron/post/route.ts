@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+
 import { NextRequest, NextResponse } from "next/server";
 
 import {
@@ -7,11 +9,13 @@ import {
   wasStoryPosted
 } from "@/lib/dedup";
 import { getLatestNews } from "@/lib/news";
-import { generatePost } from "@/lib/post-generator";
-import { postToTwitter, uploadTwitterMediaFromUrl } from "@/lib/twitter";
+import { chooseStoryForPosting, generatePost } from "@/lib/post-generator";
 import { getPexelsImage } from "@/lib/pexels";
+import { searchRecentTweets, postToTwitter, uploadTwitterMediaFromUrl } from "@/lib/twitter";
+import { NewsStory, TwitterSearchPost } from "@/lib/types";
 
 const warningHookKey = "__xbot_warning_hook_installed__";
+const STORY_TWEET_SEARCH_LIMIT = 10;
 export const runtime = "nodejs";
 
 if (!(globalThis as Record<string, unknown>)[warningHookKey]) {
@@ -29,6 +33,32 @@ if (!(globalThis as Record<string, unknown>)[warningHookKey]) {
 
 function unauthorized() {
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+}
+
+function buildStorySearchQuery(story: NewsStory): string {
+  const phrase = story.title.split("|")[0].split(":")[0].trim();
+  return `(${phrase} OR \"${story.source}\") (construction OR ai OR robotics OR infrastructure) -is:retweet lang:en`;
+}
+
+async function getSocialSignalsForStories(stories: NewsStory[]): Promise<Map<string, TwitterSearchPost[]>> {
+  const relatedPostsByStory = new Map<string, TwitterSearchPost[]>();
+
+  await Promise.all(
+    stories.slice(0, 8).map(async (story) => {
+      try {
+        const posts = await searchRecentTweets(buildStorySearchQuery(story), STORY_TWEET_SEARCH_LIMIT);
+        relatedPostsByStory.set(story.url, posts);
+      } catch (error) {
+        console.error("[xbot][cron] social signal lookup failed", {
+          storyUrl: story.url,
+          error: error instanceof Error ? error.message : String(error)
+        });
+        relatedPostsByStory.set(story.url, []);
+      }
+    })
+  );
+
+  return relatedPostsByStory;
 }
 
 export async function GET(request: NextRequest) {
@@ -54,7 +84,7 @@ export async function GET(request: NextRequest) {
     const stories = await getLatestNews();
     console.log("[xbot][cron] stories fetched", { runId, count: stories.length });
 
-    let selectedStory = null;
+    const unpostedStories: NewsStory[] = [];
     for (const story of stories) {
       const alreadyPosted = await wasStoryPosted(story.url);
       console.log("[xbot][cron] dedup check", {
@@ -64,12 +94,11 @@ export async function GET(request: NextRequest) {
       });
 
       if (!alreadyPosted) {
-        selectedStory = story;
-        break;
+        unpostedStories.push(story);
       }
     }
 
-    if (!selectedStory) {
+    if (unpostedStories.length === 0) {
       console.log("[xbot][cron] no new stories", { runId });
       return NextResponse.json(
         {
@@ -82,14 +111,20 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    const relatedPostsByStory = await getSocialSignalsForStories(unpostedStories);
+    const selection = await chooseStoryForPosting(unpostedStories, relatedPostsByStory);
+    const selectedStory = selection.story;
+
     console.log("[xbot][cron] selected story", {
       runId,
       source: selectedStory.source,
       title: selectedStory.title,
-      url: selectedStory.url
+      url: selectedStory.url,
+      reason: selection.reason,
+      socialSignalCount: selection.relatedPosts.length
     });
 
-    const text = await generatePost(selectedStory);
+    const text = await generatePost(selectedStory, selection.relatedPosts);
     console.log("[xbot][cron] generated post", {
       runId,
       length: text.length,
@@ -147,6 +182,8 @@ export async function GET(request: NextRequest) {
       postText: text,
       tweetId: tweet.id,
       sourceReplyPosted: true,
+      storySelectionReason: selection.reason,
+      relatedPostUrls: selection.relatedPosts.map((post) => post.url),
       kvEnabled: isKvEnabled(),
       runId
     });
