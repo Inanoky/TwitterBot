@@ -2,7 +2,7 @@ import OpenAI from "openai";
 
 import { NewsStory, StorySelection, StorySocialSignal } from "@/lib/types";
 
-const MAX_TWEET_LENGTH = 280;
+const MAX_TWEET_LENGTH = 200;
 const X_URL_LENGTH = 23;
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.1";
 const FALLBACK_HOOKS = [
