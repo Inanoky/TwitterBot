@@ -8,14 +8,14 @@ import {
   markStoryAsPosted,
   wasStoryPosted
 } from "@/lib/dedup";
+import { getGoogleTrendsSignalsForStories } from "@/lib/google-trends";
 import { getLatestNews } from "@/lib/news";
 import { chooseStoryForPosting, generatePost } from "@/lib/post-generator";
 import { getPexelsImage } from "@/lib/pexels";
-import { searchRecentTweets, postToTwitter, uploadTwitterMediaFromUrl } from "@/lib/twitter";
-import { NewsStory, TwitterSearchPost } from "@/lib/types";
+import { postToTwitter, uploadTwitterMediaFromUrl } from "@/lib/twitter";
+import { NewsStory, StorySocialSignal } from "@/lib/types";
 
 const warningHookKey = "__xbot_warning_hook_installed__";
-const STORY_TWEET_SEARCH_LIMIT = 10;
 export const runtime = "nodejs";
 
 if (!(globalThis as Record<string, unknown>)[warningHookKey]) {
@@ -35,30 +35,19 @@ function unauthorized() {
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 }
 
-function buildStorySearchQuery(story: NewsStory): string {
-  const phrase = story.title.split("|")[0].split(":")[0].trim();
-  return `(${phrase} OR \"${story.source}\") (construction OR ai OR robotics OR infrastructure) -is:retweet lang:en`;
-}
-
-async function getSocialSignalsForStories(stories: NewsStory[]): Promise<Map<string, TwitterSearchPost[]>> {
-  const relatedPostsByStory = new Map<string, TwitterSearchPost[]>();
-
-  await Promise.all(
-    stories.slice(0, 8).map(async (story) => {
-      try {
-        const posts = await searchRecentTweets(buildStorySearchQuery(story), STORY_TWEET_SEARCH_LIMIT);
-        relatedPostsByStory.set(story.url, posts);
-      } catch (error) {
-        console.error("[xbot][cron] social signal lookup failed", {
-          storyUrl: story.url,
-          error: error instanceof Error ? error.message : String(error)
-        });
-        relatedPostsByStory.set(story.url, []);
-      }
-    })
-  );
-
-  return relatedPostsByStory;
+async function getSocialSignalsForStories(stories: NewsStory[]): Promise<Map<string, StorySocialSignal[]>> {
+  try {
+    return await getGoogleTrendsSignalsForStories(stories.slice(0, 8));
+  } catch (error) {
+    console.error("[xbot][cron] social signal lookup failed", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+    const emptySignalsByStory = new Map<string, StorySocialSignal[]>();
+    for (const story of stories.slice(0, 8)) {
+      emptySignalsByStory.set(story.url, []);
+    }
+    return emptySignalsByStory;
+  }
 }
 
 export async function GET(request: NextRequest) {
@@ -121,10 +110,10 @@ export async function GET(request: NextRequest) {
       title: selectedStory.title,
       url: selectedStory.url,
       reason: selection.reason,
-      socialSignalCount: selection.relatedPosts.length
+      socialSignalCount: selection.relatedSignals.length
     });
 
-    const text = await generatePost(selectedStory, selection.relatedPosts);
+    const text = await generatePost(selectedStory, selection.relatedSignals);
     console.log("[xbot][cron] generated post", {
       runId,
       length: text.length,
@@ -147,21 +136,11 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const tweet = await postToTwitter(text, { mediaIds });
+    const tweet = await postToTwitter(text, { mediaIds, cardUri: selectedStory.url });
     console.log("[xbot][cron] posted tweet", {
       runId,
       tweetId: tweet.id,
       mediaCount: mediaIds.length
-    });
-
-    const sourceReplyText = `Source: ${selectedStory.url}`;
-    const sourceReply = await postToTwitter(sourceReplyText, {
-      replyToTweetId: tweet.id
-    });
-    console.log("[xbot][cron] posted source reply", {
-      runId,
-      tweetId: sourceReply.id,
-      parentTweetId: tweet.id
     });
 
     await markStoryAsPosted(selectedStory.url);
@@ -181,9 +160,10 @@ export async function GET(request: NextRequest) {
       postedStoryUrl: selectedStory.url,
       postText: text,
       tweetId: tweet.id,
-      sourceReplyPosted: true,
+      sourceReplyPosted: false,
+      sourceCardUri: selectedStory.url,
       storySelectionReason: selection.reason,
-      relatedPostUrls: selection.relatedPosts.map((post) => post.url),
+      relatedSignalUrls: selection.relatedSignals.map((signal) => signal.url),
       kvEnabled: isKvEnabled(),
       runId
     });

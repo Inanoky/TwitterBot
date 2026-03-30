@@ -12,6 +12,7 @@ type OAuthCredentials = {
 type CreateTweetOptions = {
   replyToTweetId?: string;
   mediaIds?: string[];
+  cardUri?: string;
 };
 
 type TwitterPostResult = {
@@ -436,11 +437,16 @@ export async function postToTwitter(text: string, options: CreateTweetOptions = 
     payload.media = { media_ids: options.mediaIds };
   }
 
+  if (options.cardUri) {
+    payload.card_uri = options.cardUri;
+  }
+
   console.log("[xbot][twitter] posting", {
     endpoint: TWITTER_TWEET_ENDPOINT,
     textLength: text.length,
     replyToTweetId: options.replyToTweetId,
     mediaCount: options.mediaIds?.length ?? 0,
+    cardUri: options.cardUri,
     preview: text.slice(0, 120),
   });
 
