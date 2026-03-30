@@ -136,7 +136,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const tweet = await postToTwitter(text, { mediaIds, cardUri: selectedStory.url });
+    const tweet = await postToTwitter(text, { mediaIds });
     console.log("[xbot][cron] posted tweet", {
       runId,
       tweetId: tweet.id,
@@ -161,7 +161,6 @@ export async function GET(request: NextRequest) {
       postText: text,
       tweetId: tweet.id,
       sourceReplyPosted: false,
-      sourceCardUri: selectedStory.url,
       storySelectionReason: selection.reason,
       relatedSignalUrls: selection.relatedSignals.map((signal) => signal.url),
       kvEnabled: isKvEnabled(),

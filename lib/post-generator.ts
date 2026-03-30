@@ -3,7 +3,7 @@ import OpenAI from "openai";
 import { NewsStory, StorySelection, StorySocialSignal } from "@/lib/types";
 
 const MAX_TWEET_LENGTH = 280;
-const RESERVED_FOR_LINK_REPLY = 0;
+const X_URL_LENGTH = 23;
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.1";
 const FALLBACK_HOOKS = [
   "This changes how jobsites adopt AI:",
@@ -25,6 +25,15 @@ function truncateTweet(text: string): string {
   return `${text.slice(0, MAX_TWEET_LENGTH - 1).trimEnd()}…`;
 }
 
+function truncateForUrl(text: string): string {
+  const maxBodyLength = MAX_TWEET_LENGTH - (X_URL_LENGTH + 1);
+  if (text.length <= maxBodyLength) {
+    return text;
+  }
+
+  return `${text.slice(0, maxBodyLength - 1).trimEnd()}…`;
+}
+
 function getOpenAiClient(): OpenAI | null {
   const openaiApiKey = process.env.OPENAI_API_KEY;
   return openaiApiKey ? new OpenAI({ apiKey: openaiApiKey }) : null;
@@ -37,15 +46,15 @@ function buildFallbackBody(story: NewsStory): string {
     `${hook} ${summarySource} Why it matters: teams that adopt proven AI workflows earlier can move faster, cut rework, and make better site decisions.`
   );
 
-  return truncateTweet(body);
+  return `${truncateForUrl(body)} ${story.url}`;
 }
 
-function enforceTweetRequirements(text: string): string {
+function enforceTweetRequirements(text: string, storyUrl: string): string {
   const normalized = normalizeWhitespace(text);
   const hasLeadHook = /^[A-Z0-9][^.!?]{0,80}[:?!-]/.test(normalized);
   const withHook = hasLeadHook ? normalized : `Watch this: ${normalized}`;
   const withoutUrls = withHook.replace(/https?:\/\/\S+/gi, "").trim();
-  return truncateTweet(withoutUrls);
+  return `${truncateForUrl(withoutUrls)} ${storyUrl}`;
 }
 
 function rankSignals(signals: StorySocialSignal[]): StorySocialSignal[] {
@@ -139,8 +148,8 @@ export async function generatePost(story: NewsStory, relatedSignals: StorySocial
 
 Requirements:
 - Start with a viral-style hook in the first sentence fragment
-- Do not include a URL in the tweet text (source link will be attached via card_uri)
-- Maximum ${MAX_TWEET_LENGTH - RESERVED_FOR_LINK_REPLY} characters
+- Do not include a URL in the draft text; code will append source URL for rich link preview
+- Keep final output short enough to fit one tweet after a URL is added (max ${MAX_TWEET_LENGTH} chars total)
 - Keep it short and fit in one single tweet (no thread)
 - Make it feel sharp, specific, and useful for contractors, developers, or project teams
 - Mention why it matters in business or operational terms
@@ -162,7 +171,7 @@ Relevant Google Trends signals: ${JSON.stringify(relatedSignals.slice(0, 3))}`;
       {
         role: "system",
         content:
-          "You write concise, high-performing X posts for B2B audiences. Every post starts with a strong hook, includes no URL text, and fits in one tweet. Return only the tweet text."
+          "You write concise, high-performing X posts for B2B audiences. Every post starts with a strong hook and is short enough for one tweet even after adding a source URL. Return only the tweet text."
       },
       {
         role: "user",
@@ -177,5 +186,5 @@ Relevant Google Trends signals: ${JSON.stringify(relatedSignals.slice(0, 3))}`;
     return buildFallbackBody(story);
   }
 
-  return enforceTweetRequirements(content);
+  return enforceTweetRequirements(content, story.url);
 }
