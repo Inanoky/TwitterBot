@@ -18,6 +18,7 @@ export const runtime = "nodejs";
 const ENGAGEMENT_QUERY = '("ai construction" OR "construction ai" OR "jobsite ai" OR "construction robotics" OR "aec ai" OR "infrastructure ai") -is:retweet -is:reply lang:en';
 const MIN_AUTHOR_FOLLOWERS = 300;
 const MAX_AUTHOR_FOLLOWERS = 50000;
+const ENGAGEMENT_TARGET_USERNAME = (process.env.ENGAGEMENT_TARGET_USERNAME || "BuildWitt").trim();
 
 function unauthorized() {
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -56,9 +57,11 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const posts = await searchRecentTweets(ENGAGEMENT_QUERY, 20);
+    const targetQuery = `from:${ENGAGEMENT_TARGET_USERNAME} ${ENGAGEMENT_QUERY}`;
+    const posts = await searchRecentTweets(targetQuery, 20);
     console.log("[xbot][engage] posts fetched", {
       runId,
+      targetUsername: ENGAGEMENT_TARGET_USERNAME,
       count: posts.length,
       topCandidates: posts.slice(0, 5).map((post) => ({
         id: post.id,
@@ -95,7 +98,7 @@ export async function GET(request: NextRequest) {
       console.log("[xbot][engage] no target post found", { runId });
       return NextResponse.json({
         ok: true,
-        message: "No new relevant posts found for audience growth.",
+        message: `No new relevant posts found for target account @${ENGAGEMENT_TARGET_USERNAME}.`,
         kvEnabled: isKvEnabled(),
         runId
       });
@@ -128,6 +131,7 @@ export async function GET(request: NextRequest) {
     });
 
     let followedAuthor = false;
+    let followsThisRun = 0;
     if (shouldFollowAuthor(targetPost) && targetPost.authorId) {
       const alreadyFollowed = await wasUserFollowed(targetPost.authorId);
       console.log("[xbot][engage] follow check", {
@@ -137,10 +141,11 @@ export async function GET(request: NextRequest) {
         alreadyFollowed
       });
 
-      if (!alreadyFollowed) {
+      if (!alreadyFollowed && followsThisRun < 1) {
         await followUser(targetPost.authorId);
         await markUserFollowed(targetPost.authorId);
         followedAuthor = true;
+        followsThisRun += 1;
         console.log("[xbot][engage] author followed", {
           runId,
           authorId: targetPost.authorId,
@@ -160,12 +165,14 @@ export async function GET(request: NextRequest) {
       runId,
       tweetId: targetPost.id,
       followedAuthor,
+      followsThisRun,
       replyTweetId: replyTweet.id
     });
 
     return NextResponse.json({
       ok: true,
       growthAction: "liked_relevant_post_and_replied",
+      targetUsername: ENGAGEMENT_TARGET_USERNAME,
       targetTweetId: targetPost.id,
       targetTweetUrl: targetPost.url,
       targetAuthorUsername: targetPost.authorUsername,
@@ -173,6 +180,7 @@ export async function GET(request: NextRequest) {
       replyTweetId: replyTweet.id,
       replyText,
       followedAuthor,
+      followsThisRun,
       kvEnabled: isKvEnabled(),
       runId
     });
