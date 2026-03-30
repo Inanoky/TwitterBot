@@ -16,8 +16,6 @@ import { TwitterSearchPost } from "@/lib/types";
 export const runtime = "nodejs";
 
 const ENGAGEMENT_QUERY = '("ai construction" OR "construction ai" OR "jobsite ai" OR "construction robotics" OR "aec ai" OR "infrastructure ai") -is:retweet -is:reply lang:en';
-const MIN_AUTHOR_FOLLOWERS = 300;
-const MAX_AUTHOR_FOLLOWERS = 50000;
 
 function unauthorized() {
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -31,11 +29,11 @@ function scorePost(post: TwitterSearchPost): number {
 }
 
 function shouldFollowAuthor(post: TwitterSearchPost): boolean {
-  if (!post.authorId || !post.authorFollowersCount) {
+  if (!post.authorId) {
     return false;
   }
 
-  return post.authorFollowersCount >= MIN_AUTHOR_FOLLOWERS && post.authorFollowersCount <= MAX_AUTHOR_FOLLOWERS;
+  return true;
 }
 
 export async function GET(request: NextRequest) {
@@ -82,6 +80,7 @@ export async function GET(request: NextRequest) {
         authorUsername: post.authorUsername,
         score: scorePost(post),
         alreadyLiked,
+        shouldFollow: shouldFollowAuthor(post),
         url: post.url
       });
 
@@ -95,7 +94,7 @@ export async function GET(request: NextRequest) {
       console.log("[xbot][engage] no target post found", { runId });
       return NextResponse.json({
         ok: true,
-        message: "No new relevant posts found for audience growth.",
+        message: "No new relevant AI + construction posts found.",
         kvEnabled: isKvEnabled(),
         runId
       });
@@ -128,6 +127,7 @@ export async function GET(request: NextRequest) {
     });
 
     let followedAuthor = false;
+    let followsThisRun = 0;
     if (shouldFollowAuthor(targetPost) && targetPost.authorId) {
       const alreadyFollowed = await wasUserFollowed(targetPost.authorId);
       console.log("[xbot][engage] follow check", {
@@ -137,10 +137,11 @@ export async function GET(request: NextRequest) {
         alreadyFollowed
       });
 
-      if (!alreadyFollowed) {
+      if (!alreadyFollowed && followsThisRun < 1) {
         await followUser(targetPost.authorId);
         await markUserFollowed(targetPost.authorId);
         followedAuthor = true;
+        followsThisRun += 1;
         console.log("[xbot][engage] author followed", {
           runId,
           authorId: targetPost.authorId,
@@ -160,6 +161,7 @@ export async function GET(request: NextRequest) {
       runId,
       tweetId: targetPost.id,
       followedAuthor,
+      followsThisRun,
       replyTweetId: replyTweet.id
     });
 
@@ -173,6 +175,7 @@ export async function GET(request: NextRequest) {
       replyTweetId: replyTweet.id,
       replyText,
       followedAuthor,
+      followsThisRun,
       kvEnabled: isKvEnabled(),
       runId
     });
