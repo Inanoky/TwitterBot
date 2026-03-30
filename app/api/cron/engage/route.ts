@@ -4,13 +4,10 @@ import { NextRequest, NextResponse } from "next/server";
 
 import {
   isKvEnabled,
-  markTweetLiked,
   markUserFollowed,
-  wasTweetLiked,
   wasUserFollowed
 } from "@/lib/dedup";
-import { generateEngagementReply } from "@/lib/post-generator";
-import { followUser, likeTweet, postToTwitter, searchRecentTweets } from "@/lib/twitter";
+import { followUser, searchRecentTweets } from "@/lib/twitter";
 import { TwitterSearchPost } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -73,18 +70,18 @@ export async function GET(request: NextRequest) {
 
     let targetPost: TwitterSearchPost | null = null;
     for (const post of rankedPosts) {
-      const alreadyLiked = await wasTweetLiked(post.id);
+      const alreadyFollowed = post.authorId ? await wasUserFollowed(post.authorId) : true;
       console.log("[xbot][engage] candidate check", {
         runId,
         tweetId: post.id,
         authorUsername: post.authorUsername,
         score: scorePost(post),
-        alreadyLiked,
+        alreadyFollowed,
         shouldFollow: shouldFollowAuthor(post),
         url: post.url
       });
 
-      if (!alreadyLiked) {
+      if (shouldFollowAuthor(post) && !alreadyFollowed) {
         targetPost = post;
         break;
       }
@@ -94,7 +91,7 @@ export async function GET(request: NextRequest) {
       console.log("[xbot][engage] no target post found", { runId });
       return NextResponse.json({
         ok: true,
-        message: "No new relevant AI + construction posts found.",
+        message: "No eligible new authors found to follow from AI + construction posts.",
         kvEnabled: isKvEnabled(),
         runId
       });
@@ -110,34 +107,10 @@ export async function GET(request: NextRequest) {
       url: targetPost.url
     });
 
-    await likeTweet(targetPost.id);
-    await markTweetLiked(targetPost.id);
-    console.log("[xbot][engage] tweet liked", {
-      runId,
-      tweetId: targetPost.id,
-      url: targetPost.url
-    });
-
-    const replyText = await generateEngagementReply(targetPost);
-    const replyTweet = await postToTwitter(replyText, { replyToTweetId: targetPost.id });
-    console.log("[xbot][engage] reply posted", {
-      runId,
-      replyTweetId: replyTweet.id,
-      targetTweetId: targetPost.id
-    });
-
     let followedAuthor = false;
     let followsThisRun = 0;
     if (shouldFollowAuthor(targetPost) && targetPost.authorId) {
-      const alreadyFollowed = await wasUserFollowed(targetPost.authorId);
-      console.log("[xbot][engage] follow check", {
-        runId,
-        authorId: targetPost.authorId,
-        authorUsername: targetPost.authorUsername,
-        alreadyFollowed
-      });
-
-      if (!alreadyFollowed && followsThisRun < 1) {
+      if (followsThisRun < 1) {
         await followUser(targetPost.authorId);
         await markUserFollowed(targetPost.authorId);
         followedAuthor = true;
@@ -161,19 +134,16 @@ export async function GET(request: NextRequest) {
       runId,
       tweetId: targetPost.id,
       followedAuthor,
-      followsThisRun,
-      replyTweetId: replyTweet.id
+      followsThisRun
     });
 
     return NextResponse.json({
       ok: true,
-      growthAction: "liked_relevant_post_and_replied",
+      growthAction: "followed_one_relevant_author",
       targetTweetId: targetPost.id,
       targetTweetUrl: targetPost.url,
       targetAuthorUsername: targetPost.authorUsername,
       targetAuthorFollowers: targetPost.authorFollowersCount,
-      replyTweetId: replyTweet.id,
-      replyText,
       followedAuthor,
       followsThisRun,
       kvEnabled: isKvEnabled(),
