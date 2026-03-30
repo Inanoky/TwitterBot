@@ -8,12 +8,12 @@ import {
   markStoryAsPosted,
   wasStoryPosted
 } from "@/lib/dedup";
-import { getGoogleTrendsSignalsForStories } from "@/lib/google-trends";
+import { getGoogleTrendSignalsForStories } from "@/lib/google-trends";
 import { getLatestNews } from "@/lib/news";
 import { chooseStoryForPosting, generatePost } from "@/lib/post-generator";
 import { getPexelsImage } from "@/lib/pexels";
 import { postToTwitter, uploadTwitterMediaFromUrl } from "@/lib/twitter";
-import { NewsStory, StorySocialSignal } from "@/lib/types";
+import { NewsStory } from "@/lib/types";
 
 const warningHookKey = "__xbot_warning_hook_installed__";
 export const runtime = "nodejs";
@@ -33,21 +33,6 @@ if (!(globalThis as Record<string, unknown>)[warningHookKey]) {
 
 function unauthorized() {
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-}
-
-async function getSocialSignalsForStories(stories: NewsStory[]): Promise<Map<string, StorySocialSignal[]>> {
-  try {
-    return await getGoogleTrendsSignalsForStories(stories.slice(0, 8));
-  } catch (error) {
-    console.error("[xbot][cron] social signal lookup failed", {
-      error: error instanceof Error ? error.message : String(error)
-    });
-    const emptySignalsByStory = new Map<string, StorySocialSignal[]>();
-    for (const story of stories.slice(0, 8)) {
-      emptySignalsByStory.set(story.url, []);
-    }
-    return emptySignalsByStory;
-  }
 }
 
 export async function GET(request: NextRequest) {
@@ -100,8 +85,8 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const relatedPostsByStory = await getSocialSignalsForStories(unpostedStories);
-    const selection = await chooseStoryForPosting(unpostedStories, relatedPostsByStory);
+    const trendSignals = await getGoogleTrendSignalsForStories(unpostedStories);
+    const selection = await chooseStoryForPosting(unpostedStories, trendSignals);
     const selectedStory = selection.story;
 
     console.log("[xbot][cron] selected story", {
@@ -110,10 +95,11 @@ export async function GET(request: NextRequest) {
       title: selectedStory.title,
       url: selectedStory.url,
       reason: selection.reason,
-      socialSignalCount: selection.relatedSignals.length
+      trendScore: selection.trendScore,
+      matchedTrendTitles: selection.matchedTrendTitles
     });
 
-    const text = await generatePost(selectedStory, selection.relatedSignals);
+    const text = await generatePost(selectedStory);
     console.log("[xbot][cron] generated post", {
       runId,
       length: text.length,
@@ -162,7 +148,8 @@ export async function GET(request: NextRequest) {
       tweetId: tweet.id,
       sourceReplyPosted: false,
       storySelectionReason: selection.reason,
-      relatedSignalUrls: selection.relatedSignals.map((signal) => signal.url),
+      trendScore: selection.trendScore,
+      matchedTrendTitles: selection.matchedTrendTitles,
       kvEnabled: isKvEnabled(),
       runId
     });

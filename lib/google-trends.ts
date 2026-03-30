@@ -1,121 +1,99 @@
-import { NewsStory, StorySocialSignal } from "@/lib/types";
+import { NewsStory } from "@/lib/types";
 
-const GOOGLE_TRENDS_RSS_URL = "https://trends.google.com/trending/rss?geo=US";
+type TrendItem = {
+  title: string;
+  approxTraffic?: string;
+};
 
-function htmlDecode(input: string): string {
-  return input
+const GOOGLE_TRENDS_RSS = "https://trends.google.com/trending/rss?geo=US";
+
+function decodeXmlEntities(value: string): string {
+  return value
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .trim();
+    .replace(/&#39;/g, "'");
 }
 
-function stripCdata(value: string): string {
-  return value.replace(/^<!\[CDATA\[/, "").replace(/\]\]>$/, "").trim();
+function cleanText(value: string): string {
+  return decodeXmlEntities(value).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
 }
 
-function normalizeText(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+function tokenize(value: string): string[] {
+  return cleanText(value)
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length >= 4);
 }
 
-function extractKeywordSet(value: string): Set<string> {
-  return new Set(
-    normalizeText(value)
-      .split(" ")
-      .filter((token) => token.length >= 4)
-  );
-}
+function parseTrendItems(xml: string): TrendItem[] {
+  const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)];
 
-function parseTagValue(block: string, tagName: string): string {
-  const match = block.match(new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`, "i"));
-  return match ? htmlDecode(stripCdata(match[1])) : "";
-}
+  return items
+    .map<TrendItem | null>((item) => {
+      const block = item[1];
+      const titleMatch = block.match(/<title><!\[CDATA\[([\s\S]*?)\]\]><\/title>|<title>([\s\S]*?)<\/title>/);
+      const trafficMatch = block.match(/<ht:approx_traffic>([\s\S]*?)<\/ht:approx_traffic>/);
+      const title = cleanText((titleMatch?.[1] || titleMatch?.[2] || "").trim());
 
-function parseTrendItems(xml: string): StorySocialSignal[] {
-  const itemBlocks = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/gi)].map((match) => match[1]);
-
-  return itemBlocks
-    .map((item, index) => {
-      const title = parseTagValue(item, "title");
-      const url = parseTagValue(item, "link");
-      const source = parseTagValue(item, "ht:news_item_source") || undefined;
-
-      if (!title || !url) {
+      if (!title) {
         return null;
       }
 
       return {
         title,
-        url,
-        source,
-        score: Math.max(1, 100 - index * 4)
-      } as StorySocialSignal;
+        approxTraffic: trafficMatch?.[1] ? cleanText(trafficMatch[1]) : undefined
+      };
     })
-    .filter((signal): signal is StorySocialSignal => Boolean(signal));
+    .filter((item): item is TrendItem => item !== null);
 }
 
-function scoreTrendMatch(story: NewsStory, trend: StorySocialSignal): number {
-  const storyKeywords = extractKeywordSet(`${story.title} ${story.description} ${story.source}`);
-  const trendKeywords = extractKeywordSet(`${trend.title} ${trend.source ?? ""}`);
+function computeStoryTrendScore(story: NewsStory, trends: TrendItem[]): { score: number; matchedTrendTitles: string[] } {
+  const storyTokens = new Set(tokenize(`${story.title} ${story.description} ${story.source}`));
+  let score = 0;
+  const matchedTrendTitles: string[] = [];
 
-  if (storyKeywords.size === 0 || trendKeywords.size === 0) {
-    return 0;
-  }
+  for (const trend of trends) {
+    const trendTokens = tokenize(trend.title);
+    const overlap = trendTokens.filter((token) => storyTokens.has(token)).length;
 
-  let overlapCount = 0;
-  for (const token of trendKeywords) {
-    if (storyKeywords.has(token)) {
-      overlapCount += 1;
+    if (overlap > 0) {
+      score += overlap;
+      matchedTrendTitles.push(trend.title);
     }
   }
 
-  if (overlapCount === 0) {
-    return 0;
-  }
-
-  return overlapCount * 20 + trend.score;
+  return { score, matchedTrendTitles: matchedTrendTitles.slice(0, 3) };
 }
 
-export async function getGoogleTrendsSignalsForStories(stories: NewsStory[]): Promise<Map<string, StorySocialSignal[]>> {
-  const signalsByStory = new Map<string, StorySocialSignal[]>();
+export async function getGoogleTrendSignalsForStories(
+  stories: NewsStory[]
+): Promise<Map<string, { score: number; matchedTrendTitles: string[] }>> {
+  const signals = new Map<string, { score: number; matchedTrendTitles: string[] }>();
 
-  for (const story of stories) {
-    signalsByStory.set(story.url, []);
+  try {
+    const res = await fetch(GOOGLE_TRENDS_RSS, { next: { revalidate: 1800 } });
+
+    if (!res.ok) {
+      throw new Error(`Google Trends RSS failed: ${res.status} ${await res.text()}`);
+    }
+
+    const xml = await res.text();
+    const trends = parseTrendItems(xml);
+
+    for (const story of stories) {
+      signals.set(story.url, computeStoryTrendScore(story, trends));
+    }
+  } catch (error) {
+    console.error("[xbot][trends] failed to load Google Trends", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+
+    for (const story of stories) {
+      signals.set(story.url, { score: 0, matchedTrendTitles: [] });
+    }
   }
 
-  if (stories.length === 0) {
-    return signalsByStory;
-  }
-
-  const response = await fetch(GOOGLE_TRENDS_RSS_URL, {
-    headers: {
-      "User-Agent": "Mozilla/5.0 (compatible; xbot/1.0; +https://example.com/bot)"
-    },
-    cache: "no-store"
-  });
-
-  if (!response.ok) {
-    throw new Error(`Google Trends RSS lookup failed: ${response.status} ${response.statusText}`);
-  }
-
-  const xml = await response.text();
-  const trendItems = parseTrendItems(xml);
-
-  for (const story of stories) {
-    const matches = trendItems
-      .map((trend) => ({ trend, matchScore: scoreTrendMatch(story, trend) }))
-      .filter((entry) => entry.matchScore > 0)
-      .sort((a, b) => b.matchScore - a.matchScore)
-      .slice(0, 5)
-      .map((entry) => ({
-        ...entry.trend,
-        score: entry.matchScore
-      }));
-
-    signalsByStory.set(story.url, matches);
-  }
-
-  return signalsByStory;
+  return signals;
 }

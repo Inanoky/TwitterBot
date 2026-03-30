@@ -1,9 +1,8 @@
 import OpenAI from "openai";
 
-import { NewsStory, StorySelection, StorySocialSignal } from "@/lib/types";
+import { NewsStory, StorySelection, TwitterSearchPost } from "@/lib/types";
 
-const MAX_TWEET_LENGTH = 200;
-const X_URL_LENGTH = 23;
+const MAX_TWEET_LENGTH = 280;
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.1";
 const FALLBACK_HOOKS = [
   "This changes how jobsites adopt AI:",
@@ -17,21 +16,12 @@ function normalizeWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
-function truncateTweet(text: string): string {
-  if (text.length <= MAX_TWEET_LENGTH) {
+function truncateText(text: string, maxLength: number): string {
+  if (text.length <= maxLength) {
     return text;
   }
 
-  return `${text.slice(0, MAX_TWEET_LENGTH - 1).trimEnd()}…`;
-}
-
-function truncateForUrl(text: string): string {
-  const maxBodyLength = MAX_TWEET_LENGTH - (X_URL_LENGTH + 1);
-  if (text.length <= maxBodyLength) {
-    return text;
-  }
-
-  return `${text.slice(0, maxBodyLength - 1).trimEnd()}…`;
+  return `${text.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
 }
 
 function getOpenAiClient(): OpenAI | null {
@@ -39,55 +29,75 @@ function getOpenAiClient(): OpenAI | null {
   return openaiApiKey ? new OpenAI({ apiKey: openaiApiKey }) : null;
 }
 
+function enforceHook(text: string): string {
+  const normalized = normalizeWhitespace(text);
+  const hasLeadHook = /^[A-Z0-9][^.!?]{0,80}[:?!-]/.test(normalized);
+
+  if (hasLeadHook) {
+    return normalized;
+  }
+
+  return `Watch this: ${normalized}`;
+}
+
+function buildTweetWithSourceUrl(body: string, sourceUrl: string): string {
+  const normalizedBody = normalizeWhitespace(body).replace(new RegExp(sourceUrl, "g"), "").trim();
+  const urlTokenLength = sourceUrl.length;
+  const separator = normalizedBody.length > 0 ? " " : "";
+  const maxBodyLength = MAX_TWEET_LENGTH - urlTokenLength - separator.length;
+  const safeBody = truncateText(enforceHook(normalizedBody), Math.max(0, maxBodyLength));
+  return `${safeBody}${separator}${sourceUrl}`.trim();
+}
+
 function buildFallbackBody(story: NewsStory): string {
   const hook = FALLBACK_HOOKS[Math.floor(Math.random() * FALLBACK_HOOKS.length)];
   const summarySource = story.description || story.title;
   const body = normalizeWhitespace(
-    `${hook} ${summarySource} Why it matters: teams that adopt proven AI workflows earlier can move faster, cut rework, and make better site decisions.`
+    `${hook} ${summarySource} Why it matters: teams that adopt proven AI workflows earlier can move faster and reduce rework.`
   );
 
-  return `${truncateForUrl(body)} ${story.url}`;
-}
-
-function enforceTweetRequirements(text: string, storyUrl: string): string {
-  const normalized = normalizeWhitespace(text);
-  const hasLeadHook = /^[A-Z0-9][^.!?]{0,80}[:?!-]/.test(normalized);
-  const withHook = hasLeadHook ? normalized : `Watch this: ${normalized}`;
-  const withoutUrls = withHook.replace(/https?:\/\/\S+/gi, "").trim();
-  return `${truncateForUrl(withoutUrls)} ${storyUrl}`;
-}
-
-function rankSignals(signals: StorySocialSignal[]): StorySocialSignal[] {
-  return [...signals].sort((a, b) => b.score - a.score);
+  return buildTweetWithSourceUrl(body, story.url);
 }
 
 export async function chooseStoryForPosting(
   stories: NewsStory[],
-  relatedSignalsByStory: Map<string, StorySocialSignal[]>
+  trendSignalsByStory: Map<string, { score: number; matchedTrendTitles: string[] }>
 ): Promise<StorySelection> {
   if (stories.length === 0) {
     throw new Error("No stories available for selection.");
   }
 
-  const client = getOpenAiClient();
+  const scoredStories = stories
+    .map((story) => {
+      const trendSignal = trendSignalsByStory.get(story.url) ?? { score: 0, matchedTrendTitles: [] };
+      return {
+        story,
+        trendScore: trendSignal.score,
+        matchedTrendTitles: trendSignal.matchedTrendTitles
+      };
+    })
+    .sort((a, b) => b.trendScore - a.trendScore);
 
+  const client = getOpenAiClient();
   if (!client) {
-    const story = stories[0];
+    const top = scoredStories[0];
     return {
-      story,
-      reason: "Fallback selected the freshest story because OpenAI is not configured.",
-      relatedSignals: rankSignals(relatedSignalsByStory.get(story.url) ?? []).slice(0, 3)
+      story: top.story,
+      trendScore: top.trendScore,
+      matchedTrendTitles: top.matchedTrendTitles,
+      reason: "Fallback selected the top story using Google Trends overlap."
     };
   }
 
-  const candidates = stories.slice(0, 8).map((story, index) => ({
+  const candidates = scoredStories.slice(0, 8).map((candidate, index) => ({
     index,
-    title: story.title,
-    description: story.description,
-    source: story.source,
-    publishedAt: story.publishedAt,
-    url: story.url,
-    topTrendSignals: rankSignals(relatedSignalsByStory.get(story.url) ?? []).slice(0, 3)
+    title: candidate.story.title,
+    description: candidate.story.description,
+    source: candidate.story.source,
+    publishedAt: candidate.story.publishedAt,
+    url: candidate.story.url,
+    trendScore: candidate.trendScore,
+    matchedTrendTitles: candidate.matchedTrendTitles
   }));
 
   const response = await client.chat.completions.create({
@@ -98,7 +108,7 @@ export async function chooseStoryForPosting(
       {
         role: "system",
         content:
-          "You pick the single most engaging AI-in-construction topic for an X account. Prefer topics with fresh news, practical implications, and visible traction in Google Trends signals. Return compact JSON with keys selectedIndex and reason."
+          "You pick the single most engaging AI-in-construction topic for an X account. Prefer stories with high Google Trends overlap, freshness, and practical business impact. Return compact JSON with keys selectedIndex and reason."
       },
       {
         role: "user",
@@ -108,36 +118,39 @@ export async function chooseStoryForPosting(
   });
 
   const content = response.choices[0]?.message?.content?.trim();
-
   if (!content) {
-    const story = stories[0];
+    const top = scoredStories[0];
     return {
-      story,
-      reason: "Model returned empty output; fallback selected the freshest story.",
-      relatedSignals: rankSignals(relatedSignalsByStory.get(story.url) ?? []).slice(0, 3)
+      story: top.story,
+      trendScore: top.trendScore,
+      matchedTrendTitles: top.matchedTrendTitles,
+      reason: "Model returned empty output; fallback selected top Google Trends overlap story."
     };
   }
 
   try {
     const parsed = JSON.parse(content) as { selectedIndex?: number; reason?: string };
-    const selectedStory = stories[Math.max(0, Math.min(parsed.selectedIndex ?? 0, stories.length - 1))];
+    const selectedIndex = Math.max(0, Math.min(parsed.selectedIndex ?? 0, candidates.length - 1));
+    const selectedCandidate = scoredStories[selectedIndex];
 
     return {
-      story: selectedStory,
-      reason: normalizeWhitespace(parsed.reason || "Chosen for likely engagement potential."),
-      relatedSignals: rankSignals(relatedSignalsByStory.get(selectedStory.url) ?? []).slice(0, 3)
+      story: selectedCandidate.story,
+      trendScore: selectedCandidate.trendScore,
+      matchedTrendTitles: selectedCandidate.matchedTrendTitles,
+      reason: normalizeWhitespace(parsed.reason || "Chosen for likely engagement potential.")
     };
   } catch {
-    const story = stories[0];
+    const top = scoredStories[0];
     return {
-      story,
-      reason: "Failed to parse model output; fallback selected the freshest story.",
-      relatedSignals: rankSignals(relatedSignalsByStory.get(story.url) ?? []).slice(0, 3)
+      story: top.story,
+      trendScore: top.trendScore,
+      matchedTrendTitles: top.matchedTrendTitles,
+      reason: "Failed to parse model output; fallback selected top Google Trends overlap story."
     };
   }
 }
 
-export async function generatePost(story: NewsStory, relatedSignals: StorySocialSignal[] = []): Promise<string> {
+export async function generatePost(story: NewsStory): Promise<string> {
   const client = getOpenAiClient();
 
   if (!client) {
@@ -147,22 +160,19 @@ export async function generatePost(story: NewsStory, relatedSignals: StorySocial
   const prompt = `Write one engaging X post about this AI + construction news.
 
 Requirements:
-- Start with a viral-style hook in the first sentence fragment
-- Do not include a URL in the draft text; code will append source URL for rich link preview
-- Keep final output short enough to fit one tweet after a URL is added (max ${MAX_TWEET_LENGTH} chars total)
-- Keep it short and fit in one single tweet (no thread)
-- Make it feel sharp, specific, and useful for contractors, developers, or project teams
+- Start with a strong hook in the first sentence fragment
+- Keep the post concise and useful for contractors, developers, or project teams
 - Mention why it matters in business or operational terms
-- End with a short discussion prompt only when it feels natural and helps invite replies
+- Include this source URL exactly once at the end of the post: ${story.url}
+- Entire post (text + URL + space) must stay within ${MAX_TWEET_LENGTH} characters
 - No hashtags unless absolutely necessary
-- No more than 1 emoji, and only if it genuinely improves the post
+- No more than 1 emoji, and only if it improves clarity
 - Return only the final tweet text
 
 News title: ${story.title}
 News description: ${story.description}
 Source: ${story.source}
-Article URL: ${story.url}
-Relevant Google Trends signals: ${JSON.stringify(relatedSignals.slice(0, 3))}`;
+Article URL: ${story.url}`;
 
   const response = await client.chat.completions.create({
     model: OPENAI_MODEL,
@@ -171,7 +181,7 @@ Relevant Google Trends signals: ${JSON.stringify(relatedSignals.slice(0, 3))}`;
       {
         role: "system",
         content:
-          "You write concise, high-performing X posts for B2B audiences. Every post starts with a strong hook and is short enough for one tweet even after adding a source URL. Return only the tweet text."
+          "You write concise, high-performing X posts for B2B audiences. Every post starts with a strong hook and fits the character limit. Return only the tweet text."
       },
       {
         role: "user",
@@ -181,10 +191,40 @@ Relevant Google Trends signals: ${JSON.stringify(relatedSignals.slice(0, 3))}`;
   });
 
   const content = response.choices[0]?.message?.content?.trim();
-
   if (!content) {
     return buildFallbackBody(story);
   }
 
-  return enforceTweetRequirements(content, story.url);
+  return buildTweetWithSourceUrl(content, story.url);
+}
+
+export async function generateEngagementReply(post: TwitterSearchPost): Promise<string> {
+  const fallback = truncateText(
+    `Strong signal here. The teams that tie AI to real field workflows usually see value faster. Curious what implementation step mattered most for you?`,
+    MAX_TWEET_LENGTH
+  );
+
+  const client = getOpenAiClient();
+  if (!client) {
+    return fallback;
+  }
+
+  const response = await client.chat.completions.create({
+    model: OPENAI_MODEL,
+    temperature: 0.8,
+    messages: [
+      {
+        role: "system",
+        content:
+          "Write one concise, thoughtful reply for X. Sound human and professional. No hashtags. No links. Keep it under 240 characters."
+      },
+      {
+        role: "user",
+        content: `Create a reply to this post:\n${post.text}\nContext: AI + construction audience growth.`
+      }
+    ]
+  });
+
+  const content = normalizeWhitespace(response.choices[0]?.message?.content?.trim() || "");
+  return content ? truncateText(content, 240) : fallback;
 }

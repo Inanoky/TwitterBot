@@ -9,7 +9,8 @@ import {
   wasTweetLiked,
   wasUserFollowed
 } from "@/lib/dedup";
-import { followUser, likeTweet, searchRecentTweets } from "@/lib/twitter";
+import { generateEngagementReply } from "@/lib/post-generator";
+import { followUser, likeTweet, postToTwitter, searchRecentTweets } from "@/lib/twitter";
 import { TwitterSearchPost } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -118,6 +119,14 @@ export async function GET(request: NextRequest) {
       url: targetPost.url
     });
 
+    const replyText = await generateEngagementReply(targetPost);
+    const replyTweet = await postToTwitter(replyText, { replyToTweetId: targetPost.id });
+    console.log("[xbot][engage] reply posted", {
+      runId,
+      replyTweetId: replyTweet.id,
+      targetTweetId: targetPost.id
+    });
+
     let followedAuthor = false;
     if (shouldFollowAuthor(targetPost) && targetPost.authorId) {
       const alreadyFollowed = await wasUserFollowed(targetPost.authorId);
@@ -150,16 +159,19 @@ export async function GET(request: NextRequest) {
     console.log("[xbot][engage] completed", {
       runId,
       tweetId: targetPost.id,
-      followedAuthor
+      followedAuthor,
+      replyTweetId: replyTweet.id
     });
 
     return NextResponse.json({
       ok: true,
-      growthAction: "liked_relevant_post",
+      growthAction: "liked_relevant_post_and_replied",
       targetTweetId: targetPost.id,
       targetTweetUrl: targetPost.url,
       targetAuthorUsername: targetPost.authorUsername,
       targetAuthorFollowers: targetPost.authorFollowersCount,
+      replyTweetId: replyTweet.id,
+      replyText,
       followedAuthor,
       kvEnabled: isKvEnabled(),
       runId
