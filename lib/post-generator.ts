@@ -24,6 +24,32 @@ function truncateText(text: string, maxLength: number): string {
   return `${text.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
 }
 
+function trimToCompleteThought(text: string, maxLength: number): string {
+  const normalized = normalizeWhitespace(text);
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  const clipped = normalized.slice(0, maxLength).trim();
+  const lastSentenceBoundary = Math.max(
+    clipped.lastIndexOf(". "),
+    clipped.lastIndexOf("! "),
+    clipped.lastIndexOf("? "),
+    clipped.lastIndexOf(": ")
+  );
+
+  if (lastSentenceBoundary >= Math.floor(maxLength * 0.55)) {
+    return clipped.slice(0, lastSentenceBoundary + 1).trim();
+  }
+
+  const lastWordBoundary = clipped.lastIndexOf(" ");
+  if (lastWordBoundary > 0) {
+    return clipped.slice(0, lastWordBoundary).trim();
+  }
+
+  return clipped;
+}
+
 function getOpenAiClient(): OpenAI | null {
   const openaiApiKey = process.env.OPENAI_API_KEY;
   return openaiApiKey ? new OpenAI({ apiKey: openaiApiKey }) : null;
@@ -45,7 +71,7 @@ function buildTweetWithSourceUrl(body: string, sourceUrl: string): string {
   const urlTokenLength = sourceUrl.length;
   const separator = normalizedBody.length > 0 ? " " : "";
   const maxBodyLength = MAX_TWEET_LENGTH - urlTokenLength - separator.length;
-  const safeBody = truncateText(enforceHook(normalizedBody), Math.max(0, maxBodyLength));
+  const safeBody = trimToCompleteThought(enforceHook(normalizedBody), Math.max(0, maxBodyLength));
   return `${safeBody}${separator}${sourceUrl}`.trim();
 }
 
