@@ -16,9 +16,6 @@ import { TwitterSearchPost } from "@/lib/types";
 export const runtime = "nodejs";
 
 const ENGAGEMENT_QUERY = '("ai construction" OR "construction ai" OR "jobsite ai" OR "construction robotics" OR "aec ai" OR "infrastructure ai") -is:retweet -is:reply lang:en';
-const MIN_AUTHOR_FOLLOWERS = 300;
-const MAX_AUTHOR_FOLLOWERS = 50000;
-const ENGAGEMENT_TARGET_USERNAME = (process.env.ENGAGEMENT_TARGET_USERNAME || "BuildWitt").trim();
 
 function unauthorized() {
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -32,11 +29,11 @@ function scorePost(post: TwitterSearchPost): number {
 }
 
 function shouldFollowAuthor(post: TwitterSearchPost): boolean {
-  if (!post.authorId || !post.authorFollowersCount) {
+  if (!post.authorId) {
     return false;
   }
 
-  return post.authorFollowersCount >= MIN_AUTHOR_FOLLOWERS && post.authorFollowersCount <= MAX_AUTHOR_FOLLOWERS;
+  return true;
 }
 
 export async function GET(request: NextRequest) {
@@ -57,11 +54,9 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const targetQuery = `from:${ENGAGEMENT_TARGET_USERNAME} ${ENGAGEMENT_QUERY}`;
-    const posts = await searchRecentTweets(targetQuery, 20);
+    const posts = await searchRecentTweets(ENGAGEMENT_QUERY, 20);
     console.log("[xbot][engage] posts fetched", {
       runId,
-      targetUsername: ENGAGEMENT_TARGET_USERNAME,
       count: posts.length,
       topCandidates: posts.slice(0, 5).map((post) => ({
         id: post.id,
@@ -85,6 +80,7 @@ export async function GET(request: NextRequest) {
         authorUsername: post.authorUsername,
         score: scorePost(post),
         alreadyLiked,
+        shouldFollow: shouldFollowAuthor(post),
         url: post.url
       });
 
@@ -98,7 +94,7 @@ export async function GET(request: NextRequest) {
       console.log("[xbot][engage] no target post found", { runId });
       return NextResponse.json({
         ok: true,
-        message: `No new relevant posts found for target account @${ENGAGEMENT_TARGET_USERNAME}.`,
+        message: "No new relevant AI + construction posts found.",
         kvEnabled: isKvEnabled(),
         runId
       });
@@ -172,7 +168,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       ok: true,
       growthAction: "liked_relevant_post_and_replied",
-      targetUsername: ENGAGEMENT_TARGET_USERNAME,
       targetTweetId: targetPost.id,
       targetTweetUrl: targetPost.url,
       targetAuthorUsername: targetPost.authorUsername,
