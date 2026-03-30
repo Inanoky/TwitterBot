@@ -131,6 +131,7 @@ export async function GET(request: NextRequest) {
     });
 
     let followedAuthor = false;
+    let followsThisRun = 0;
     if (shouldFollowAuthor(targetPost) && targetPost.authorId) {
       const alreadyFollowed = await wasUserFollowed(targetPost.authorId);
       console.log("[xbot][engage] follow check", {
@@ -140,10 +141,11 @@ export async function GET(request: NextRequest) {
         alreadyFollowed
       });
 
-      if (!alreadyFollowed) {
+      if (!alreadyFollowed && followsThisRun < 1) {
         await followUser(targetPost.authorId);
         await markUserFollowed(targetPost.authorId);
         followedAuthor = true;
+        followsThisRun += 1;
         console.log("[xbot][engage] author followed", {
           runId,
           authorId: targetPost.authorId,
@@ -163,6 +165,7 @@ export async function GET(request: NextRequest) {
       runId,
       tweetId: targetPost.id,
       followedAuthor,
+      followsThisRun,
       replyTweetId: replyTweet.id
     });
 
@@ -177,6 +180,7 @@ export async function GET(request: NextRequest) {
       replyTweetId: replyTweet.id,
       replyText,
       followedAuthor,
+      followsThisRun,
       kvEnabled: isKvEnabled(),
       runId
     });
