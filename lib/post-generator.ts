@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 
-import { NewsStory, StorySelection, TwitterSearchPost } from "@/lib/types";
+import { NewsStory, StorySelection, StorySocialSignal } from "@/lib/types";
 
 const MAX_TWEET_LENGTH = 280;
 const RESERVED_FOR_LINK_REPLY = 0;
@@ -34,34 +34,29 @@ function buildFallbackBody(story: NewsStory): string {
   const hook = FALLBACK_HOOKS[Math.floor(Math.random() * FALLBACK_HOOKS.length)];
   const summarySource = story.description || story.title;
   const body = normalizeWhitespace(
-    `${hook} ${summarySource} Why it matters: teams that adopt proven AI workflows earlier can move faster, cut rework, and make better site decisions.`
+    `${hook} ${summarySource} Why it matters: teams that adopt proven AI workflows earlier can move faster, cut rework, and make better site decisions. ${story.url}`
   );
 
   return truncateTweet(body);
 }
 
-function enforceHook(text: string): string {
+function enforceTweetRequirements(text: string, storyUrl: string): string {
   const normalized = normalizeWhitespace(text);
   const hasLeadHook = /^[A-Z0-9][^.!?]{0,80}[:?!-]/.test(normalized);
+  const withHook = hasLeadHook ? normalized : `Watch this: ${normalized}`;
+  const hasSourceUrl = withHook.includes(storyUrl);
+  const withSourceUrl = hasSourceUrl ? withHook : `${withHook} ${storyUrl}`;
 
-  if (hasLeadHook) {
-    return truncateTweet(normalized);
-  }
-
-  return truncateTweet(`Watch this: ${normalized}`);
+  return truncateTweet(withSourceUrl);
 }
 
-function rankPosts(posts: TwitterSearchPost[]): TwitterSearchPost[] {
-  return [...posts].sort((a, b) => {
-    const scoreA = a.likeCount + a.retweetCount * 2 + a.replyCount * 2 + a.quoteCount * 2;
-    const scoreB = b.likeCount + b.retweetCount * 2 + b.replyCount * 2 + b.quoteCount * 2;
-    return scoreB - scoreA;
-  });
+function rankSignals(signals: StorySocialSignal[]): StorySocialSignal[] {
+  return [...signals].sort((a, b) => b.score - a.score);
 }
 
 export async function chooseStoryForPosting(
   stories: NewsStory[],
-  relatedPostsByStory: Map<string, TwitterSearchPost[]>
+  relatedSignalsByStory: Map<string, StorySocialSignal[]>
 ): Promise<StorySelection> {
   if (stories.length === 0) {
     throw new Error("No stories available for selection.");
@@ -74,7 +69,7 @@ export async function chooseStoryForPosting(
     return {
       story,
       reason: "Fallback selected the freshest story because OpenAI is not configured.",
-      relatedPosts: rankPosts(relatedPostsByStory.get(story.url) ?? []).slice(0, 3)
+      relatedSignals: rankSignals(relatedSignalsByStory.get(story.url) ?? []).slice(0, 3)
     };
   }
 
@@ -85,14 +80,7 @@ export async function chooseStoryForPosting(
     source: story.source,
     publishedAt: story.publishedAt,
     url: story.url,
-    topPosts: rankPosts(relatedPostsByStory.get(story.url) ?? []).slice(0, 3).map((post) => ({
-      text: post.text,
-      likeCount: post.likeCount,
-      retweetCount: post.retweetCount,
-      replyCount: post.replyCount,
-      quoteCount: post.quoteCount,
-      url: post.url
-    }))
+    topTrendSignals: rankSignals(relatedSignalsByStory.get(story.url) ?? []).slice(0, 3)
   }));
 
   const response = await client.chat.completions.create({
@@ -103,7 +91,7 @@ export async function chooseStoryForPosting(
       {
         role: "system",
         content:
-          "You pick the single most engaging AI-in-construction topic for an X account. Prefer topics with fresh news, practical implications, and visible traction in social conversation. Return compact JSON with keys selectedIndex and reason."
+          "You pick the single most engaging AI-in-construction topic for an X account. Prefer topics with fresh news, practical implications, and visible traction in Google Trends signals. Return compact JSON with keys selectedIndex and reason."
       },
       {
         role: "user",
@@ -119,7 +107,7 @@ export async function chooseStoryForPosting(
     return {
       story,
       reason: "Model returned empty output; fallback selected the freshest story.",
-      relatedPosts: rankPosts(relatedPostsByStory.get(story.url) ?? []).slice(0, 3)
+      relatedSignals: rankSignals(relatedSignalsByStory.get(story.url) ?? []).slice(0, 3)
     };
   }
 
@@ -130,19 +118,19 @@ export async function chooseStoryForPosting(
     return {
       story: selectedStory,
       reason: normalizeWhitespace(parsed.reason || "Chosen for likely engagement potential."),
-      relatedPosts: rankPosts(relatedPostsByStory.get(selectedStory.url) ?? []).slice(0, 3)
+      relatedSignals: rankSignals(relatedSignalsByStory.get(selectedStory.url) ?? []).slice(0, 3)
     };
   } catch {
     const story = stories[0];
     return {
       story,
       reason: "Failed to parse model output; fallback selected the freshest story.",
-      relatedPosts: rankPosts(relatedPostsByStory.get(story.url) ?? []).slice(0, 3)
+      relatedSignals: rankSignals(relatedSignalsByStory.get(story.url) ?? []).slice(0, 3)
     };
   }
 }
 
-export async function generatePost(story: NewsStory, relatedPosts: TwitterSearchPost[] = []): Promise<string> {
+export async function generatePost(story: NewsStory, relatedSignals: StorySocialSignal[] = []): Promise<string> {
   const client = getOpenAiClient();
 
   if (!client) {
@@ -153,8 +141,9 @@ export async function generatePost(story: NewsStory, relatedPosts: TwitterSearch
 
 Requirements:
 - Start with a viral-style hook in the first sentence fragment
-- Do NOT include the source URL because it will be posted in the first reply
-- Maximum ${MAX_TWEET_LENGTH - RESERVED_FOR_LINK_REPLY} characters
+- Include the source URL in this same tweet
+- Maximum ${MAX_TWEET_LENGTH - RESERVED_FOR_LINK_REPLY} characters total including the URL
+- Must fit in one single tweet (no thread)
 - Make it feel sharp, specific, and useful for contractors, developers, or project teams
 - Mention why it matters in business or operational terms
 - End with a short discussion prompt only when it feels natural and helps invite replies
@@ -166,7 +155,7 @@ News title: ${story.title}
 News description: ${story.description}
 Source: ${story.source}
 Article URL: ${story.url}
-Relevant X conversation: ${JSON.stringify(relatedPosts.slice(0, 3))}`;
+Relevant Google Trends signals: ${JSON.stringify(relatedSignals.slice(0, 3))}`;
 
   const response = await client.chat.completions.create({
     model: OPENAI_MODEL,
@@ -175,7 +164,7 @@ Relevant X conversation: ${JSON.stringify(relatedPosts.slice(0, 3))}`;
       {
         role: "system",
         content:
-          "You write concise, high-performing X posts for B2B audiences. Every post starts with a strong hook and fits the character limit. Return only the tweet text."
+          "You write concise, high-performing X posts for B2B audiences. Every post starts with a strong hook, includes the source URL, and fits in one tweet. Return only the tweet text."
       },
       {
         role: "user",
@@ -190,6 +179,5 @@ Relevant X conversation: ${JSON.stringify(relatedPosts.slice(0, 3))}`;
     return buildFallbackBody(story);
   }
 
-  return enforceHook(content);
+  return enforceTweetRequirements(content, story.url);
 }
-

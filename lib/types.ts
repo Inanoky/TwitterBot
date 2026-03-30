@@ -6,6 +6,13 @@ export type NewsStory = {
   publishedAt: string;
 };
 
+export type StorySocialSignal = {
+  title: string;
+  url: string;
+  source?: string;
+  score: number;
+};
+
 export type TwitterSearchPost = {
   id: string;
   text: string;
@@ -27,5 +34,5 @@ export type TwitterSearchPost = {
 export type StorySelection = {
   story: NewsStory;
   reason: string;
-  relatedPosts: TwitterSearchPost[];
+  relatedSignals: StorySocialSignal[];
 };
