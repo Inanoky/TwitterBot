@@ -27,5 +27,6 @@ export type TwitterSearchPost = {
 export type StorySelection = {
   story: NewsStory;
   reason: string;
-  relatedPosts: TwitterSearchPost[];
+  trendScore: number;
+  matchedTrendTitles: string[];
 };
