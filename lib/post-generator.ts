@@ -24,6 +24,48 @@ function truncateText(text: string, maxLength: number): string {
   return `${text.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
 }
 
+function ensureSentencePunctuation(text: string): string {
+  const normalized = normalizeWhitespace(text);
+  if (!normalized) {
+    return normalized;
+  }
+
+  return /[.!?]$/.test(normalized) ? normalized : `${normalized}.`;
+}
+
+function trimToCompleteThought(text: string, maxLength: number): string {
+  const normalized = normalizeWhitespace(text);
+  if (normalized.length <= maxLength) {
+    return ensureSentencePunctuation(normalized);
+  }
+
+  const clipped = normalized.slice(0, maxLength).trim();
+  const sentenceEndMatches = [...clipped.matchAll(/[.!?](?=\s|$)/g)];
+  const lastSentenceEnd = sentenceEndMatches.length
+    ? sentenceEndMatches[sentenceEndMatches.length - 1].index ?? -1
+    : -1;
+  if (lastSentenceEnd >= Math.floor(maxLength * 0.45)) {
+    return ensureSentencePunctuation(clipped.slice(0, lastSentenceEnd + 1).trim());
+  }
+
+  const lastWordBoundary = clipped.lastIndexOf(" ");
+  if (lastWordBoundary > 0) {
+    const base = clipped.slice(0, lastWordBoundary).trim();
+    if (base.length < maxLength) {
+      return ensureSentencePunctuation(base);
+    }
+
+    const noLastChar = base.slice(0, -1).trimEnd();
+    return ensureSentencePunctuation(noLastChar);
+  }
+
+  if (clipped.length < maxLength) {
+    return ensureSentencePunctuation(clipped);
+  }
+
+  return `${clipped.slice(0, -1).trimEnd()}.`;
+}
+
 function getOpenAiClient(): OpenAI | null {
   const openaiApiKey = process.env.OPENAI_API_KEY;
   return openaiApiKey ? new OpenAI({ apiKey: openaiApiKey }) : null;
@@ -45,7 +87,7 @@ function buildTweetWithSourceUrl(body: string, sourceUrl: string): string {
   const urlTokenLength = sourceUrl.length;
   const separator = normalizedBody.length > 0 ? " " : "";
   const maxBodyLength = MAX_TWEET_LENGTH - urlTokenLength - separator.length;
-  const safeBody = truncateText(enforceHook(normalizedBody), Math.max(0, maxBodyLength));
+  const safeBody = trimToCompleteThought(enforceHook(normalizedBody), Math.max(0, maxBodyLength));
   return `${safeBody}${separator}${sourceUrl}`.trim();
 }
 
@@ -165,6 +207,7 @@ Requirements:
 - Mention why it matters in business or operational terms
 - Include this source URL exactly once at the end of the post: ${story.url}
 - Entire post (text + URL + space) must stay within ${MAX_TWEET_LENGTH} characters
+- The post body must end as a complete sentence with final punctuation before the URL
 - No hashtags unless absolutely necessary
 - No more than 1 emoji, and only if it improves clarity
 - Return only the final tweet text

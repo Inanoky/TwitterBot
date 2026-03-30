@@ -427,6 +427,10 @@ export async function uploadTwitterMediaFromUrl(imageUrl: string): Promise<strin
 }
 
 export async function postToTwitter(text: string, options: CreateTweetOptions = {}): Promise<TwitterPostResult> {
+  if (options.mediaIds?.length && options.cardUri) {
+    throw new Error("Twitter post options conflict: mediaIds and cardUri cannot be used together.");
+  }
+
   const payload: Record<string, unknown> = { text };
 
   if (options.replyToTweetId) {

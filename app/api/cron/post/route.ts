@@ -4,15 +4,13 @@ import { NextRequest, NextResponse } from "next/server";
 
 import {
   isKvEnabled,
-  markPexelsPhotoUsed,
   markStoryAsPosted,
   wasStoryPosted
 } from "@/lib/dedup";
 import { getGoogleTrendSignalsForStories } from "@/lib/google-trends";
 import { getLatestNews } from "@/lib/news";
 import { chooseStoryForPosting, generatePost } from "@/lib/post-generator";
-import { getPexelsImage } from "@/lib/pexels";
-import { postToTwitter, uploadTwitterMediaFromUrl } from "@/lib/twitter";
+import { postToTwitter } from "@/lib/twitter";
 import { NewsStory } from "@/lib/types";
 
 const warningHookKey = "__xbot_warning_hook_installed__";
@@ -106,46 +104,23 @@ export async function GET(request: NextRequest) {
       preview: text.slice(0, 140)
     });
 
-    const pexelsImage = await getPexelsImage(selectedStory);
-    let mediaIds: string[] = [];
-
-    if (pexelsImage?.imageUrl) {
-      try {
-        const mediaId = await uploadTwitterMediaFromUrl(pexelsImage.imageUrl);
-        mediaIds = [mediaId];
-      } catch (error) {
-        console.error("[xbot][cron] media upload failed", {
-          runId,
-          imageUrl: pexelsImage.imageUrl,
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    }
-
-    const tweet = await postToTwitter(text, { mediaIds });
+    const tweet = await postToTwitter(text);
     console.log("[xbot][cron] posted tweet", {
       runId,
       tweetId: tweet.id,
-      mediaCount: mediaIds.length
+      mediaCount: 0,
+      cardStyleExpected: true
     });
 
     await markStoryAsPosted(selectedStory.url);
     console.log("[xbot][cron] marked posted", { runId, url: selectedStory.url });
-
-    if (pexelsImage?.id && mediaIds.length > 0) {
-      await markPexelsPhotoUsed(pexelsImage.id);
-      console.log("[xbot][cron] marked pexels photo used", {
-        runId,
-        photoId: pexelsImage.id,
-        query: pexelsImage.query
-      });
-    }
 
     return NextResponse.json({
       ok: true,
       postedStoryUrl: selectedStory.url,
       postText: text,
       tweetId: tweet.id,
+      mediaAttached: false,
       sourceReplyPosted: false,
       storySelectionReason: selection.reason,
       trendScore: selection.trendScore,
