@@ -11,6 +11,7 @@ type OAuthCredentials = {
 
 type CreateTweetOptions = {
   replyToTweetId?: string;
+  quoteToTweetId?: string;
   mediaIds?: string[];
 };
 
@@ -36,6 +37,20 @@ type TwitterRequestOptions = {
   formParams?: Record<string, string>;
   method?: "GET" | "POST";
 };
+
+export class TwitterApiError extends Error {
+  status: number;
+  endpoint: string;
+  responseBody: string;
+
+  constructor(endpoint: string, status: number, responseBody: string) {
+    super(`Twitter API error: ${status} ${responseBody}`);
+    this.name = "TwitterApiError";
+    this.status = status;
+    this.endpoint = endpoint;
+    this.responseBody = responseBody;
+  }
+}
 
 type FinalizeResponse = {
   media_id_string?: string;
@@ -201,7 +216,7 @@ async function twitterRequest<T = unknown>(
       status: res.status,
       body: raw,
     });
-    throw new Error(`Twitter API error: ${res.status} ${raw}`);
+    throw new TwitterApiError(endpoint, res.status, raw);
   }
 
   if (!raw.trim()) {
@@ -234,7 +249,7 @@ async function twitterBearerGet<T>(endpoint: string, params: Record<string, stri
 
   if (!res.ok) {
     console.error("[xbot][twitter] bearer request failed", { endpoint, status: res.status, body: raw });
-    throw new Error(`Twitter API bearer error: ${res.status} ${raw}`);
+    throw new TwitterApiError(endpoint, res.status, raw);
   }
 
   return raw.trim() ? (JSON.parse(raw) as T) : ({} as T);
@@ -430,6 +445,10 @@ export async function postToTwitter(text: string, options: CreateTweetOptions = 
 
   if (options.replyToTweetId) {
     payload.reply = { in_reply_to_tweet_id: options.replyToTweetId };
+  }
+
+  if (options.quoteToTweetId) {
+    payload.quote_tweet_id = options.quoteToTweetId;
   }
 
   if (options.mediaIds && options.mediaIds.length > 0) {

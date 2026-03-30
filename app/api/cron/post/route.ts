@@ -8,14 +8,14 @@ import {
   markStoryAsPosted,
   wasStoryPosted
 } from "@/lib/dedup";
+import { getGoogleTrendSignalsForStories } from "@/lib/google-trends";
 import { getLatestNews } from "@/lib/news";
 import { chooseStoryForPosting, generatePost } from "@/lib/post-generator";
 import { getPexelsImage } from "@/lib/pexels";
-import { searchRecentTweets, postToTwitter, uploadTwitterMediaFromUrl } from "@/lib/twitter";
-import { NewsStory, TwitterSearchPost } from "@/lib/types";
+import { postToTwitter, uploadTwitterMediaFromUrl } from "@/lib/twitter";
+import { NewsStory } from "@/lib/types";
 
 const warningHookKey = "__xbot_warning_hook_installed__";
-const STORY_TWEET_SEARCH_LIMIT = 10;
 export const runtime = "nodejs";
 
 if (!(globalThis as Record<string, unknown>)[warningHookKey]) {
@@ -33,32 +33,6 @@ if (!(globalThis as Record<string, unknown>)[warningHookKey]) {
 
 function unauthorized() {
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-}
-
-function buildStorySearchQuery(story: NewsStory): string {
-  const phrase = story.title.split("|")[0].split(":")[0].trim();
-  return `(${phrase} OR \"${story.source}\") (construction OR ai OR robotics OR infrastructure) -is:retweet lang:en`;
-}
-
-async function getSocialSignalsForStories(stories: NewsStory[]): Promise<Map<string, TwitterSearchPost[]>> {
-  const relatedPostsByStory = new Map<string, TwitterSearchPost[]>();
-
-  await Promise.all(
-    stories.slice(0, 8).map(async (story) => {
-      try {
-        const posts = await searchRecentTweets(buildStorySearchQuery(story), STORY_TWEET_SEARCH_LIMIT);
-        relatedPostsByStory.set(story.url, posts);
-      } catch (error) {
-        console.error("[xbot][cron] social signal lookup failed", {
-          storyUrl: story.url,
-          error: error instanceof Error ? error.message : String(error)
-        });
-        relatedPostsByStory.set(story.url, []);
-      }
-    })
-  );
-
-  return relatedPostsByStory;
 }
 
 export async function GET(request: NextRequest) {
@@ -111,8 +85,8 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const relatedPostsByStory = await getSocialSignalsForStories(unpostedStories);
-    const selection = await chooseStoryForPosting(unpostedStories, relatedPostsByStory);
+    const trendSignals = await getGoogleTrendSignalsForStories(unpostedStories);
+    const selection = await chooseStoryForPosting(unpostedStories, trendSignals);
     const selectedStory = selection.story;
 
     console.log("[xbot][cron] selected story", {
@@ -121,10 +95,11 @@ export async function GET(request: NextRequest) {
       title: selectedStory.title,
       url: selectedStory.url,
       reason: selection.reason,
-      socialSignalCount: selection.relatedPosts.length
+      trendScore: selection.trendScore,
+      matchedTrendTitles: selection.matchedTrendTitles
     });
 
-    const text = await generatePost(selectedStory, selection.relatedPosts);
+    const text = await generatePost(selectedStory);
     console.log("[xbot][cron] generated post", {
       runId,
       length: text.length,
@@ -154,16 +129,6 @@ export async function GET(request: NextRequest) {
       mediaCount: mediaIds.length
     });
 
-    const sourceReplyText = `Source: ${selectedStory.url}`;
-    const sourceReply = await postToTwitter(sourceReplyText, {
-      replyToTweetId: tweet.id
-    });
-    console.log("[xbot][cron] posted source reply", {
-      runId,
-      tweetId: sourceReply.id,
-      parentTweetId: tweet.id
-    });
-
     await markStoryAsPosted(selectedStory.url);
     console.log("[xbot][cron] marked posted", { runId, url: selectedStory.url });
 
@@ -181,9 +146,10 @@ export async function GET(request: NextRequest) {
       postedStoryUrl: selectedStory.url,
       postText: text,
       tweetId: tweet.id,
-      sourceReplyPosted: true,
+      sourceReplyPosted: false,
       storySelectionReason: selection.reason,
-      relatedPostUrls: selection.relatedPosts.map((post) => post.url),
+      trendScore: selection.trendScore,
+      matchedTrendTitles: selection.matchedTrendTitles,
       kvEnabled: isKvEnabled(),
       runId
     });
