@@ -34,20 +34,18 @@ function buildFallbackBody(story: NewsStory): string {
   const hook = FALLBACK_HOOKS[Math.floor(Math.random() * FALLBACK_HOOKS.length)];
   const summarySource = story.description || story.title;
   const body = normalizeWhitespace(
-    `${hook} ${summarySource} Why it matters: teams that adopt proven AI workflows earlier can move faster, cut rework, and make better site decisions. ${story.url}`
+    `${hook} ${summarySource} Why it matters: teams that adopt proven AI workflows earlier can move faster, cut rework, and make better site decisions.`
   );
 
   return truncateTweet(body);
 }
 
-function enforceTweetRequirements(text: string, storyUrl: string): string {
+function enforceTweetRequirements(text: string): string {
   const normalized = normalizeWhitespace(text);
   const hasLeadHook = /^[A-Z0-9][^.!?]{0,80}[:?!-]/.test(normalized);
   const withHook = hasLeadHook ? normalized : `Watch this: ${normalized}`;
-  const hasSourceUrl = withHook.includes(storyUrl);
-  const withSourceUrl = hasSourceUrl ? withHook : `${withHook} ${storyUrl}`;
-
-  return truncateTweet(withSourceUrl);
+  const withoutUrls = withHook.replace(/https?:\/\/\S+/gi, "").trim();
+  return truncateTweet(withoutUrls);
 }
 
 function rankSignals(signals: StorySocialSignal[]): StorySocialSignal[] {
@@ -141,9 +139,9 @@ export async function generatePost(story: NewsStory, relatedSignals: StorySocial
 
 Requirements:
 - Start with a viral-style hook in the first sentence fragment
-- Include the source URL in this same tweet
-- Maximum ${MAX_TWEET_LENGTH - RESERVED_FOR_LINK_REPLY} characters total including the URL
-- Must fit in one single tweet (no thread)
+- Do not include a URL in the tweet text (source link will be attached via card_uri)
+- Maximum ${MAX_TWEET_LENGTH - RESERVED_FOR_LINK_REPLY} characters
+- Keep it short and fit in one single tweet (no thread)
 - Make it feel sharp, specific, and useful for contractors, developers, or project teams
 - Mention why it matters in business or operational terms
 - End with a short discussion prompt only when it feels natural and helps invite replies
@@ -164,7 +162,7 @@ Relevant Google Trends signals: ${JSON.stringify(relatedSignals.slice(0, 3))}`;
       {
         role: "system",
         content:
-          "You write concise, high-performing X posts for B2B audiences. Every post starts with a strong hook, includes the source URL, and fits in one tweet. Return only the tweet text."
+          "You write concise, high-performing X posts for B2B audiences. Every post starts with a strong hook, includes no URL text, and fits in one tweet. Return only the tweet text."
       },
       {
         role: "user",
@@ -179,5 +177,5 @@ Relevant Google Trends signals: ${JSON.stringify(relatedSignals.slice(0, 3))}`;
     return buildFallbackBody(story);
   }
 
-  return enforceTweetRequirements(content, story.url);
+  return enforceTweetRequirements(content);
 }

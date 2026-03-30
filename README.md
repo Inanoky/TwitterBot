@@ -12,7 +12,7 @@ A full Next.js + Vercel Cron app that posts **every hour** to X with engaging up
 - Avoids duplicate post sources using **Vercel KV** (optional but recommended)
 - Generates compelling post copy with **OpenAI** (fallback generator if OpenAI key is missing)
 - Grows the account more safely by liking relevant niche posts and optionally following strong-fit creators **3 times per day** via a dedicated cron route
-- Starts every post with a hook, keeps the tweet inside the X character limit, and includes the source URL in the same tweet (no thread)
+- Starts every post with a hook, keeps the tweet inside the X character limit, and attaches the source via `card_uri` (no thread)
 - Attaches a relevant image from **Pexels** when `PEXELS_API` is configured
 - Publishes directly to X using OAuth 1.0a user context
 
@@ -144,7 +144,7 @@ Cron is configured in `vercel.json` and currently posts hourly while the engagem
 
 ## 5) Project structure
 
-- `app/api/cron/post/route.ts` - scheduled endpoint; fetches news, looks up related Google Trends signals, lets OpenAI choose the best topic, generates copy (with source URL in-line), and posts to X.
+- `app/api/cron/post/route.ts` - scheduled endpoint; fetches news, looks up related Google Trends signals, lets OpenAI choose the best topic, generates short copy, and posts to X with source attached via `card_uri`.
 - `app/api/cron/engage/route.ts` - scheduled endpoint; finds relevant X posts, likes one strong-fit post, and optionally follows the author on each run (3 runs/day).
 - `lib/news.ts` - news providers + query + dedupe/sort.
 - `lib/post-generator.ts` - hook-first OpenAI prompt + fallback generator.
